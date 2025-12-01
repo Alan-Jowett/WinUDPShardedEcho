@@ -33,7 +33,7 @@ jobs:
         Start-Sleep -Seconds 2
 
         try {
-          # Run client test for 5 seconds with 1 worker (use new flag-style CLI)
+          # Run client test for 60 seconds with 1 worker (use new flag-style CLI)
           $clientOutput = & ".\build\Release\echo_client.exe" "--server" "127.0.0.1" "--port" "5000" "--payload" "64" "--cores" "1" "--duration" "60" 2>&1
           $clientExitCode = $LASTEXITCODE
 

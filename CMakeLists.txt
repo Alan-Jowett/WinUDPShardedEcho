@@ -20,7 +20,7 @@ include(FetchContent)
 FetchContent_Declare(
     wil
     GIT_REPOSITORY https://github.com/microsoft/wil.git
-    GIT_TAG        v1.0.250325.1  # pinned tag — adjust as needed
+    GIT_TAG        b6ec76a2d9a609897f25a7fa0a0bdf4238e94e35  # resolved SHA for v1.0.250325.1
 )
 
 set(WIL_BUILD_TESTS OFF CACHE BOOL "Disable WIL tests")

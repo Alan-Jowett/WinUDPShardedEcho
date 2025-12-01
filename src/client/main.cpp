@@ -434,12 +434,14 @@ int main(int argc, char* argv[]) try {
         auto [addr, len] = get_socket_name(sock);
         if (addr.ss_family == AF_INET) {
           sockaddr_in* in_addr = reinterpret_cast<sockaddr_in*>(&addr);
-          std::cout << std::format("Socket on CPU {} bound to {}:{}\n", i,
-                                   inet_ntoa(in_addr->sin_addr), ntohs(in_addr->sin_port));
+          char ip_str[INET_ADDRSTRLEN] = {};
+          InetNtopA(AF_INET, &in_addr->sin_addr, ip_str, static_cast<ULONG>(sizeof(ip_str)));
+          std::cout << std::format("Socket on CPU {} bound to {}:{}\n", i, ip_str,
+                                   ntohs(in_addr->sin_port));
         } else if (addr.ss_family == AF_INET6) {
           sockaddr_in6* in6_addr = reinterpret_cast<sockaddr_in6*>(&addr);
-          char ip_str[INET6_ADDRSTRLEN];
-          InetNtopA(AF_INET6, &in6_addr->sin6_addr, ip_str, sizeof(ip_str));
+          char ip_str[INET6_ADDRSTRLEN] = {};
+          InetNtopA(AF_INET6, &in6_addr->sin6_addr, ip_str, static_cast<ULONG>(sizeof(ip_str)));
           std::cout << std::format("Socket on CPU {} bound to [{}]:{}\n", i, ip_str,
                                    ntohs(in6_addr->sin6_port));
         }

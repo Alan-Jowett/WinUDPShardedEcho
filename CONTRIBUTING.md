@@ -65,7 +65,7 @@ docs: update CONTRIBUTING.md for this repo
 
 ## Pull Request Checklist
 
-- [ ] Branch off `initial_work` (this repo's development branch)
+- [ ] Branch off `main` (this repo's development branch)
 - [ ] Include a clear description and motivation
 - [ ] Add or update tests for behavior changes
 - [ ] Ensure the project builds on Windows with MSVC (x64)
