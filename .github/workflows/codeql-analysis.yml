@@ -5,43 +5,43 @@
 name: CodeQL Analysis
 
 on:
-	push:
-		branches: [ main ]
-	pull_request:
-		branches: [ main ]
-	schedule:
-		- cron: '0 2 * * 0'
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 2 * * 0'
 
 jobs:
-	analyze:
-		name: Analyze (CodeQL)
-		runs-on: windows-latest
-		permissions:
-			actions: read
-			security-events: write
+  analyze:
+    name: Analyze (CodeQL)
+    runs-on: windows-latest
+    permissions:
+      actions: read
+      security-events: write
 
-		steps:
-		- name: Checkout repository
-			uses: actions/checkout@v4
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
 
-		- name: Initialize CodeQL
-			uses: github/codeql-action/init@v2
-			with:
-				languages: cpp
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v2
+      with:
+        languages: cpp
 
-		- name: Setup Visual Studio
-			uses: ilammy/msvc-dev-cmd@v1
-			with:
-				vs-version: '17.0'
+    - name: Setup Visual Studio
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        vs-version: '17.0'
 
-		- name: Configure CMake (Release x64)
-			run: |
-				cmake -S . -B build -A x64 -T host=x64 -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release
+    - name: Configure CMake (Release x64)
+      run: |
+        cmake -S . -B build -A x64 -T host=x64 -G "Visual Studio 17 2022" -DCMAKE_BUILD_TYPE=Release
 
-		- name: Build with CMake
-			run: |
-				cmake --build build --config Release -j
+    - name: Build with CMake
+      run: |
+        cmake --build build --config Release -j
 
-		- name: Run CodeQL analysis
-			uses: github/codeql-action/analyze@v2
+    - name: Run CodeQL analysis
+      uses: github/codeql-action/analyze@v2
 
