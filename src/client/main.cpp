@@ -50,9 +50,6 @@ struct worker_context {
     int server_addr_len;
 };
 
-// Number of outstanding operations per socket
-constexpr size_t OUTSTANDING_OPS = 16;
-
 // Packet rate limit per worker (packets per second, 0 = unlimited)
 constexpr uint64_t PACKETS_PER_SECOND = 10000;
 
@@ -167,7 +164,7 @@ void worker_thread_func(worker_context* ctx, size_t payload_size) {
             &bytes_transferred,
             &completion_key,
             &overlapped,
-            10  // 10ms timeout to allow sending
+            IOCP_TIMEOUT_MS
         );
 
         if (!result) {

@@ -35,6 +35,11 @@ constexpr size_t MAX_PACKET_SIZE = 65507; // Max UDP payload size
 constexpr size_t HEADER_SIZE = sizeof(packet_header);
 constexpr size_t MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE;
 
+// Shared configuration constants
+constexpr size_t OUTSTANDING_OPS = 16;        // Number of outstanding I/O operations per socket
+constexpr DWORD IOCP_TIMEOUT_MS = 10;         // IOCP polling timeout in milliseconds
+constexpr DWORD IOCP_SHUTDOWN_TIMEOUT_MS = 1000; // IOCP timeout for shutdown check
+
 // Operation types for IOCP
 enum class io_operation_type {
     recv,

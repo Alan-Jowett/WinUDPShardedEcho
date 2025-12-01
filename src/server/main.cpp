@@ -32,9 +32,6 @@ struct worker_context {
     std::atomic<uint64_t> bytes_sent{0};
 };
 
-// Number of outstanding receive operations per socket
-constexpr size_t OUTSTANDING_RECVS = 16;
-
 // Worker thread function
 void worker_thread_func(worker_context* ctx) {
     // Set thread affinity to match socket affinity
@@ -46,13 +43,13 @@ void worker_thread_func(worker_context* ctx) {
 
     // Allocate receive contexts
     std::vector<std::unique_ptr<io_context>> recv_contexts;
-    for (size_t i = 0; i < OUTSTANDING_RECVS; ++i) {
+    for (size_t i = 0; i < OUTSTANDING_OPS; ++i) {
         recv_contexts.push_back(std::make_unique<io_context>());
     }
 
     // Pool of send contexts
     std::vector<std::unique_ptr<io_context>> send_contexts;
-    for (size_t i = 0; i < OUTSTANDING_RECVS; ++i) {
+    for (size_t i = 0; i < OUTSTANDING_OPS; ++i) {
         send_contexts.push_back(std::make_unique<io_context>());
     }
     std::vector<io_context*> available_send_contexts;
@@ -68,7 +65,7 @@ void worker_thread_func(worker_context* ctx) {
     }
 
     std::osyncstream(std::cout) << std::format("[CPU {}] Worker started, {} outstanding receives\n", 
-                                               ctx->processor_id, OUTSTANDING_RECVS);
+                                               ctx->processor_id, OUTSTANDING_OPS);
 
     while (!g_shutdown.load()) {
         DWORD bytes_transferred = 0;
@@ -80,7 +77,7 @@ void worker_thread_func(worker_context* ctx) {
             &bytes_transferred,
             &completion_key,
             &overlapped,
-            1000  // 1 second timeout to check shutdown flag
+            IOCP_SHUTDOWN_TIMEOUT_MS
         );
 
         if (!result) {
