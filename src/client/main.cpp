@@ -165,65 +165,65 @@ void worker_thread_func(worker_context* ctx, size_t payload_size) {
             }
         }
 
-        // Check for completions
-        DWORD bytes_transferred = 0;
-        ULONG_PTR completion_key = 0;
-        LPOVERLAPPED overlapped = nullptr;
+        // Check for completions (use GetQueuedCompletionStatusEx to batch completions)
+        const ULONG max_entries = static_cast<ULONG>(OUTSTANDING_OPS * 2);
+        std::vector<OVERLAPPED_ENTRY> entries(max_entries);
+        ULONG num_removed = 0;
 
-        BOOL result = GetQueuedCompletionStatus(
+        BOOL ex_result = GetQueuedCompletionStatusEx(
             ctx->iocp,
-            &bytes_transferred,
-            &completion_key,
-            &overlapped,
-            IOCP_TIMEOUT_MS
+            entries.data(),
+            max_entries,
+            &num_removed,
+            IOCP_TIMEOUT_MS,
+            FALSE
         );
 
-        if (!result) {
+        if (!ex_result) {
             DWORD error = GetLastError();
             if (error == WAIT_TIMEOUT) {
                 continue;
             }
-            if (overlapped != nullptr) {
-                auto* io_ctx = static_cast<io_context*>(overlapped);
-                SOCKET s = static_cast<SOCKET>(completion_key);
-                if (io_ctx->operation == io_operation_type::recv) {
-                    // Re-post receive on the socket that completed
-                    post_recv(s, io_ctx);
-                } else {
-                    available_send_contexts.push_back(io_ctx);
+            // On other errors just continue the loop
+            continue;
+        }
+
+        if (num_removed == 0) {
+            continue;
+        }
+
+        for (ULONG ei = 0; ei < num_removed; ++ei) {
+            OVERLAPPED_ENTRY &entry = entries[ei];
+            DWORD bytes_transferred = entry.dwNumberOfBytesTransferred;
+            ULONG_PTR completion_key = entry.lpCompletionKey;
+            LPOVERLAPPED overlapped = entry.lpOverlapped;
+            if (overlapped == nullptr) continue;
+
+            auto* io_ctx = static_cast<io_context*>(overlapped);
+
+            if (io_ctx->operation == io_operation_type::recv) {
+                // Received echo response
+                ctx->packets_received.fetch_add(1);
+                ctx->bytes_received.fetch_add(bytes_transferred);
+
+                if (bytes_transferred >= HEADER_SIZE) {
+                    packet_header* header = reinterpret_cast<packet_header*>(io_ctx->buffer.data());
+                    uint64_t recv_time = get_timestamp_ns();
+                    uint64_t rtt = recv_time - header->timestamp_ns;
+
+                    ctx->total_rtt_ns.fetch_add(rtt);
+                    update_min(ctx->min_rtt_ns, rtt);
+                    update_max(ctx->max_rtt_ns, rtt);
+                    ctx->outstanding_sequences.erase(header->sequence_number);
                 }
+
+                // Re-post receive on the socket that completed
+                SOCKET s = static_cast<SOCKET>(completion_key);
+                post_recv(s, io_ctx);
+            } else {
+                // Send completed
+                available_send_contexts.push_back(io_ctx);
             }
-            continue;
-        }
-
-        if (overlapped == nullptr) {
-            continue;
-        }
-
-        auto* io_ctx = static_cast<io_context*>(overlapped);
-
-        if (io_ctx->operation == io_operation_type::recv) {
-            // Received echo response
-            ctx->packets_received.fetch_add(1);
-            ctx->bytes_received.fetch_add(bytes_transferred);
-
-            if (bytes_transferred >= HEADER_SIZE) {
-                packet_header* header = reinterpret_cast<packet_header*>(io_ctx->buffer.data());
-                uint64_t recv_time = get_timestamp_ns();
-                uint64_t rtt = recv_time - header->timestamp_ns;
-
-                ctx->total_rtt_ns.fetch_add(rtt);
-                update_min(ctx->min_rtt_ns, rtt);
-                update_max(ctx->max_rtt_ns, rtt);
-                ctx->outstanding_sequences.erase(header->sequence_number);
-            }
-
-            // Re-post receive on the socket that completed
-            SOCKET s = static_cast<SOCKET>(completion_key);
-            post_recv(s, io_ctx);
-        } else {
-            // Send completed
-            available_send_contexts.push_back(io_ctx);
         }
     }
 

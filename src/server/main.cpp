@@ -69,80 +69,72 @@ void worker_thread_func(worker_context* ctx) {
                                                ctx->processor_id, OUTSTANDING_OPS);
 
     while (!g_shutdown.load()) {
-        DWORD bytes_transferred = 0;
-        ULONG_PTR completion_key = 0;
-        LPOVERLAPPED overlapped = nullptr;
+        // Use GetQueuedCompletionStatusEx to batch completions
+        const ULONG max_entries = static_cast<ULONG>(OUTSTANDING_OPS * 2);
+        std::vector<OVERLAPPED_ENTRY> entries(max_entries);
+        ULONG num_removed = 0;
 
-        BOOL result = GetQueuedCompletionStatus(
+        BOOL ex_result = GetQueuedCompletionStatusEx(
             ctx->iocp,
-            &bytes_transferred,
-            &completion_key,
-            &overlapped,
-            IOCP_SHUTDOWN_TIMEOUT_MS
+            entries.data(),
+            max_entries,
+            &num_removed,
+            IOCP_SHUTDOWN_TIMEOUT_MS,
+            FALSE
         );
 
-        if (!result) {
+        if (!ex_result) {
             DWORD error = GetLastError();
             if (error == WAIT_TIMEOUT) {
                 continue;
             }
-            if (overlapped != nullptr) {
-                // I/O operation failed
-                std::osyncstream(std::cerr) << std::format("[CPU {}] I/O operation failed: {}\n", 
-                                                           ctx->processor_id, get_last_error_message());
-                // Re-post the receive (post_recv resets the OVERLAPPED structure)
-                auto* io_ctx = static_cast<io_context*>(overlapped);
-                if (io_ctx->operation == io_operation_type::recv) {
-                    // Reset and re-post receive operation
-                    post_recv(ctx->socket, io_ctx);
-                } else {
-                    // Return send context to pool
-                    available_send_contexts.push_back(io_ctx);
-                }
-            }
             continue;
         }
 
-        if (overlapped == nullptr) {
-            continue;
-        }
+        if (num_removed == 0) continue;
 
-        auto* io_ctx = static_cast<io_context*>(overlapped);
+        for (ULONG ei = 0; ei < num_removed; ++ei) {
+            OVERLAPPED_ENTRY &entry = entries[ei];
+            DWORD bytes_transferred = entry.dwNumberOfBytesTransferred;
+            ULONG_PTR completion_key = entry.lpCompletionKey;
+            LPOVERLAPPED overlapped = entry.lpOverlapped;
+            if (overlapped == nullptr) continue;
 
-        if (io_ctx->operation == io_operation_type::recv) {
-            // Received a packet
-            ctx->packets_received.fetch_add(1);
-            ctx->bytes_received.fetch_add(bytes_transferred);
+            auto* io_ctx = static_cast<io_context*>(overlapped);
 
-            if (bytes_transferred > 0) {
-                // Get a send context
-                io_context* send_ctx = nullptr;
-                if (!available_send_contexts.empty()) {
-                    send_ctx = available_send_contexts.back();
-                    available_send_contexts.pop_back();
-                } else {
-                    // No available send context, skip echo (shouldn't happen with balanced pools)
-                    std::osyncstream(std::cerr) << std::format("[CPU {}] No available send context\n", ctx->processor_id);
-                    post_recv(ctx->socket, io_ctx);
-                    continue;
+            if (io_ctx->operation == io_operation_type::recv) {
+                // Received a packet
+                ctx->packets_received.fetch_add(1);
+                ctx->bytes_received.fetch_add(bytes_transferred);
+
+                if (bytes_transferred > 0) {
+                    // Get a send context
+                    io_context* send_ctx = nullptr;
+                    if (!available_send_contexts.empty()) {
+                        send_ctx = available_send_contexts.back();
+                        available_send_contexts.pop_back();
+                    } else {
+                        std::osyncstream(std::cerr) << std::format("[CPU {}] No available send context\n", ctx->processor_id);
+                        post_recv(ctx->socket, io_ctx);
+                        continue;
+                    }
+
+                    // Echo the packet back using the originating socket
+                    if (post_send(ctx->socket, send_ctx, io_ctx->buffer.data(), bytes_transferred,
+                                 reinterpret_cast<sockaddr*>(&io_ctx->remote_addr), io_ctx->remote_addr_len)) {
+                        ctx->packets_sent.fetch_add(1);
+                        ctx->bytes_sent.fetch_add(bytes_transferred);
+                    } else {
+                        available_send_contexts.push_back(send_ctx);
+                    }
                 }
 
-                // Echo the packet back
-                if (post_send(ctx->socket, send_ctx, io_ctx->buffer.data(), bytes_transferred,
-                             reinterpret_cast<sockaddr*>(&io_ctx->remote_addr), io_ctx->remote_addr_len)) {
-                    ctx->packets_sent.fetch_add(1);
-                    ctx->bytes_sent.fetch_add(bytes_transferred);
-                } else {
-                    // Return context to pool on failure
-                    available_send_contexts.push_back(send_ctx);
-                }
+                // Re-post receive on worker's socket
+                post_recv(ctx->socket, io_ctx);
+            } else {
+                // Send completed, return context to pool
+                available_send_contexts.push_back(io_ctx);
             }
-
-            // Re-post receive
-            post_recv(ctx->socket, io_ctx);
-        } else {
-            // Send completed, return context to pool
-            available_send_contexts.push_back(io_ctx);
         }
     }
 
