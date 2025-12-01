@@ -11,6 +11,7 @@
 
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <mutex>
 #include <syncstream>
@@ -288,6 +289,8 @@ int main(int argc, char* argv[]) try {
   const std::string recvbuf_str = parser.get("recvbuf");
   const std::string sockets_str = parser.get("sockets");
   const std::string verbose_str = parser.get("verbose");
+  size_t payload_size = 0;
+  int duration_sec = 0;
   if (!verbose_str.empty() && verbose_str != "0") {
     g_verbose.store(true);
   }
@@ -299,31 +302,33 @@ int main(int argc, char* argv[]) try {
   }
 
   const char* server_ip = server_str.c_str();
-  int port = std::atoi(port_arg.c_str());
+  char* endptr = nullptr;
+  long port_l = std::strtol(port_arg.c_str(), &endptr, 10);
+  if (endptr == port_arg.c_str() || port_l <= 0 || port_l > 65535) {
+    throw std::invalid_argument("Invalid port number");
+  }
+  int port = static_cast<int>(port_l);
   if (port <= 0 || port > 65535) {
-    std::cerr << "Invalid port number\n";
-    return 1;
+    throw std::invalid_argument("Port number out of range");
   }
 
-  size_t payload_size = static_cast<size_t>(std::atoi(payload_str.c_str()));
+  payload_size = static_cast<size_t>(std::strtoul(payload_str.c_str(), nullptr, 10));
   if (payload_size == 0 || payload_size > MAX_PAYLOAD_SIZE) {
-    std::cerr << "Invalid payload size\n";
-    parser.print_help(argv[0]);
-    return 1;
+    throw std::invalid_argument("Invalid payload size");
   }
 
   uint32_t num_processors = get_processor_count();
   uint32_t num_workers = num_processors;
-  int duration_sec = std::atoi(duration_str.c_str());
+  duration_sec = static_cast<int>(std::strtol(duration_str.c_str(), nullptr, 10));
   if (!cores_str.empty()) {
-    int requested = std::atoi(cores_str.c_str());
+    int requested = static_cast<int>(std::strtol(cores_str.c_str(), nullptr, 10));
     if (requested > 0 && static_cast<uint32_t>(requested) <= num_processors) {
       num_workers = static_cast<uint32_t>(requested);
     }
   }
 
-  g_rate_limit = static_cast<uint64_t>(std::atoi(rate_str.c_str()));
-  int sockets_per_worker = std::atoi(sockets_str.c_str());
+  g_rate_limit = static_cast<uint64_t>(std::strtoull(rate_str.c_str(), nullptr, 10));
+  int sockets_per_worker = static_cast<int>(std::strtol(sockets_str.c_str(), nullptr, 10));
   if (sockets_per_worker <= 0) sockets_per_worker = 1;
 
   // Parse receive buffer size for sockets (default 4MB)

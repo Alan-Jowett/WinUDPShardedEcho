@@ -85,9 +85,4 @@ Please be respectful and constructive. We follow the Contributor Covenant: https
 
 ---
 
-If you'd like, I can also:
-
-- Add a short `CONTRIBUTING` section to `README.md` (suggested)
-- Create a PR template and a basic GitHub Actions workflow for Windows CI
-
 Happy hacking! 🚀
