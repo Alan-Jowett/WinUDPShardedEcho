@@ -6,11 +6,13 @@
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
+// clang-format off -- to keep the include order
+#include <winsock2.h>
+// clang-format on
 
 #include <mswsock.h>
 #include <wil/resource.h>
 #include <windows.h>
-#include <winsock2.h>
 #include <ws2tcpip.h>
 
 #include <atomic>
