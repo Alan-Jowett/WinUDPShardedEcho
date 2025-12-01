@@ -5,6 +5,16 @@
 
 #pragma comment(lib, "ws2_32.lib")
 
+// SOCKET_PROCESSOR_AFFINITY may not be defined in older SDKs
+#ifndef SIO_CPU_AFFINITY
+#define SIO_CPU_AFFINITY _WSAIOW(IOC_VENDOR, 21)
+typedef struct _SOCKET_PROCESSOR_AFFINITY {
+    PROCESSOR_NUMBER Processor;
+    USHORT NumaNodeId;
+    USHORT Reserved;
+} SOCKET_PROCESSOR_AFFINITY, *PSOCKET_PROCESSOR_AFFINITY;
+#endif
+
 bool initialize_winsock() {
     WSADATA wsa_data;
     int result = WSAStartup(MAKEWORD(2, 2), &wsa_data);

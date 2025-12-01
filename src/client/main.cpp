@@ -222,10 +222,10 @@ void worker_thread_func(worker_context* ctx, size_t payload_size) {
         }
     }
 
-    // Count remaining outstanding as dropped
+    // Count remaining outstanding as dropped (add to any already tracked as dropped)
     {
         std::lock_guard<std::mutex> lock(ctx->sent_mutex);
-        ctx->packets_dropped.store(ctx->outstanding_sequences.size());
+        ctx->packets_dropped.fetch_add(ctx->outstanding_sequences.size());
     }
 
     std::osyncstream(std::cout) << std::format("[CPU {}] Worker shutting down. Stats: sent={}, recv={}, "

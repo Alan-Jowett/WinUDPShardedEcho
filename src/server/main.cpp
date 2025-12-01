@@ -92,9 +92,10 @@ void worker_thread_func(worker_context* ctx) {
                 // I/O operation failed
                 std::osyncstream(std::cerr) << std::format("[CPU {}] I/O operation failed: {}\n", 
                                                            ctx->processor_id, get_last_error_message());
-                // Re-post the receive
+                // Re-post the receive (post_recv resets the OVERLAPPED structure)
                 auto* io_ctx = static_cast<io_context*>(overlapped);
                 if (io_ctx->operation == io_operation_type::recv) {
+                    // Reset and re-post receive operation
                     post_recv(ctx->socket, io_ctx);
                 } else {
                     // Return send context to pool
