@@ -31,7 +31,7 @@ jobs:
         
         try {
           # Run client test for 5 seconds with 1 worker (use new flag-style CLI)
-          $clientOutput = & ".\build\Release\echo_client.exe" "127.0.0.1" "5000" "--payload" "64" "--cores" "1" "--duration" "5" 2>&1
+          $clientOutput = & ".\build\Release\echo_client.exe" "--server " "127.0.0.1" "--port " "5000" "--payload" "64" "--cores" "1" "--duration" "5" 2>&1
           $clientExitCode = $LASTEXITCODE
           
           Write-Host "Client output:"

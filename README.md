@@ -75,8 +75,8 @@ echo_client <server_ip> <port> [options]
 
 Example:
 ```bash
-echo_client 127.0.0.1 5000 --sockets 4 --rate 20000 --cores 2 --duration 5
-echo_client 192.168.1.100 5000 --sockets 1 --rate 10000 --payload 1024 --cores 4 --duration 30
+echo_client --server 127.0.0.1 --port 5000 --sockets 4 --rate 20000 --cores 2 --duration 5
+echo_client --server 192.168.1.100 --port 5000 --sockets 1 --rate 10000 --payload 1024 --cores 4 --duration 30
 ```
 
 ## Architecture
