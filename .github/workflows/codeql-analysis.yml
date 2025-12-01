@@ -1,0 +1,43 @@
+# SPDX-License-Identifier: MIT
+# © scalable_echo_server_demo contributors
+# This GitHub Actions workflow uses CodeQL to scan the codebase for security vulnerabilities.
+
+name: CodeQL Analysis
+
+on:
+  push:
+    branches: [ main, master, develop, v*.*.* ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  codeql:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    if: ${{ !github.event.pull_request.draft }}
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Initialize CodeQL
+      uses: github/codeql-action/init@v4
+      with:
+        languages: cpp
+
+    - name: Build for analysis
+      run: |
+        mkdir build
+        cd build
+        cmake ..
+        make
+
+    - name: Perform CodeQL Analysis
+      uses: github/codeql-action/analyze@v4
+      with:
+        category: "/language:cpp"

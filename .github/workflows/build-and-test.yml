@@ -1,18 +1,18 @@
 # SPDX-License-Identifier: MIT
-# Copyright (c) 2025 scalable_echo_server_demo contributors 
+# Copyright (c) 2025 scalable_echo_server_demo contributors
 
 name: Build and Test
 
 on:
   push:
-    branches: [ main, 'copilot/**' ]
+    branches: [ main ]
   pull_request:
     branches: [ main ]
 
 jobs:
   build-and-test:
     runs-on: windows-latest
-    
+
     steps:
     - name: Checkout repository
       uses: actions/checkout@v4
@@ -28,31 +28,31 @@ jobs:
       run: |
         # Start the server in background on port 5000 (use explicit flags)
         $server = Start-Process -FilePath ".\build\Release\echo_server.exe" -ArgumentList "--port", "5000", "--cores", "1" -PassThru -NoNewWindow
-        
+
         # Wait for server to start
         Start-Sleep -Seconds 2
-        
+
         try {
           # Run client test for 5 seconds with 1 worker (use new flag-style CLI)
           $clientOutput = & ".\build\Release\echo_client.exe" "--server" "127.0.0.1" "--port" "5000" "--payload" "64" "--cores" "1" "--duration" "60" 2>&1
           $clientExitCode = $LASTEXITCODE
-          
+
           Write-Host "Client output:"
           Write-Host $clientOutput
-          
+
           # Parse results to verify packets were sent and received
           $output = $clientOutput -join "`n"
-          
+
           if ($output -match "Packets sent: (\d+)") {
             $sent = [int]$matches[1]
             Write-Host "Packets sent: $sent"
           }
-          
+
           if ($output -match "Packets received: (\d+)") {
             $received = [int]$matches[1]
             Write-Host "Packets received: $received"
           }
-          
+
           # Verify we sent and received packets
           if ($sent -gt 0 -and $received -gt 0) {
             Write-Host "Test PASSED: Successfully sent $sent packets and received $received responses"
@@ -61,7 +61,7 @@ jobs:
             Write-Host "Test FAILED: No packets exchanged (sent=$sent, received=$received)"
             $testPassed = $false
           }
-          
+
           # Check drop rate is acceptable (< 50% for loopback)
           if ($sent -gt 0) {
             $dropRate = (($sent - $received) / $sent) * 100
@@ -70,14 +70,14 @@ jobs:
               Write-Host "Warning: High drop rate detected"
             }
           }
-          
+
         } finally {
           # Stop the server
           if ($server -and !$server.HasExited) {
             Stop-Process -Id $server.Id -Force -ErrorAction SilentlyContinue
           }
         }
-        
+
         if (-not $testPassed) {
           exit 1
         }
