@@ -11,6 +11,8 @@
 
 #include <csignal>
 #include <syncstream>
+#include <format>
+#include <iostream>
 #include "common/arg_parser.hpp"
 
 // Global flag for shutdown
@@ -68,6 +70,32 @@ void worker_thread_func(worker_context* ctx) {
     std::osyncstream(std::cout) << std::format("[CPU {}] Worker started, {} outstanding receives\n", 
                                                ctx->processor_id, OUTSTANDING_OPS);
 
+    // Short helper lambdas to make the completion-processing loop clearer.
+    auto handle_recv_completion = [&](io_context* io_ctx, DWORD bytes_transferred) {
+        // Update basic receive counters
+        ctx->packets_received.fetch_add(1);
+        ctx->bytes_received.fetch_add(bytes_transferred);
+
+        // If we received data, prepare to echo or process it
+        if (bytes_transferred > 0) {
+            // NOTE: This is the primary packet-processing area. Real servers would
+            // parse or inspect the buffer here, apply protocol logic, and decide
+            // whether to reply, forward, or drop the packet. Keep processing
+            // extremely quick to avoid blocking the IOCP worker.
+
+            // For this example we echo the packet back to the sender. Get a send context
+            // from the pool and post a send.
+            return true; // indicate that further send-handling is required
+        }
+        return false;
+    };
+
+    auto handle_send_completion = [&](io_context* io_ctx) {
+        // Send completed — update counters and make context available again.
+        // The caller is responsible for returning the context to the pool.
+        return;
+    };
+
     while (!g_shutdown.load()) {
         // Use GetQueuedCompletionStatusEx to batch completions
         const ULONG max_entries = static_cast<ULONG>(OUTSTANDING_OPS * 2);
@@ -88,6 +116,7 @@ void worker_thread_func(worker_context* ctx) {
             if (error == WAIT_TIMEOUT) {
                 continue;
             }
+            std::osyncstream(std::cerr) << std::format("[CPU {}] GetQueuedCompletionStatusEx failed with error: {}\n", ctx->processor_id, error);
             continue;
         }
 
@@ -101,38 +130,41 @@ void worker_thread_func(worker_context* ctx) {
             if (overlapped == nullptr) continue;
 
             auto* io_ctx = static_cast<io_context*>(overlapped);
+            if (io_ctx == nullptr) continue;
 
             if (io_ctx->operation == io_operation_type::recv) {
-                // Received a packet
-                ctx->packets_received.fetch_add(1);
-                ctx->bytes_received.fetch_add(bytes_transferred);
+                bool needs_send = handle_recv_completion(io_ctx, bytes_transferred);
 
-                if (bytes_transferred > 0) {
-                    // Get a send context
+                if (needs_send) {
+                    // Acquire a send context from the pool
                     io_context* send_ctx = nullptr;
                     if (!available_send_contexts.empty()) {
                         send_ctx = available_send_contexts.back();
                         available_send_contexts.pop_back();
                     } else {
                         std::osyncstream(std::cerr) << std::format("[CPU {}] No available send context\n", ctx->processor_id);
+                        // Re-post receive and continue — do not block here
                         post_recv(ctx->socket, io_ctx);
                         continue;
                     }
 
-                    // Echo the packet back using the originating socket
+                    // Echo the packet back — in a real server you would transform or
+                    // generate an appropriate response instead of simply echoing.
                     if (post_send(ctx->socket, send_ctx, io_ctx->buffer.data(), bytes_transferred,
-                                 reinterpret_cast<sockaddr*>(&io_ctx->remote_addr), io_ctx->remote_addr_len)) {
+                                  reinterpret_cast<sockaddr*>(&io_ctx->remote_addr), io_ctx->remote_addr_len)) {
                         ctx->packets_sent.fetch_add(1);
                         ctx->bytes_sent.fetch_add(bytes_transferred);
                     } else {
+                        // Return the send context to the pool on failure
                         available_send_contexts.push_back(send_ctx);
                     }
                 }
 
-                // Re-post receive on worker's socket
+                // Re-post receive for continuous processing
                 post_recv(ctx->socket, io_ctx);
             } else {
-                // Send completed, return context to pool
+                // Send completed — return context to pool
+                handle_send_completion(io_ctx);
                 available_send_contexts.push_back(io_ctx);
             }
         }
@@ -219,49 +251,46 @@ int main(int argc, char* argv[]) {
     // Create worker contexts
     std::vector<std::unique_ptr<worker_context>> workers;
 
-    for (uint32_t i = 0; i < num_workers; ++i) {
+    // Helper to create and initialize a single worker context for a given CPU id.
+    auto create_worker = [&](uint32_t cpu_id) -> std::unique_ptr<worker_context> {
         auto ctx = std::make_unique<worker_context>();
-        ctx->processor_id = i;
+        ctx->processor_id = cpu_id;
 
-        // Create UDP socket: try IPv6 dual-stack first, fall back to IPv4
+        // Create UDP socket: prefer IPv6 dual-stack, fall back to IPv4
         SOCKET sock = create_udp_socket(AF_INET6);
         bool using_ipv6 = false;
         if (sock == INVALID_SOCKET) {
-            // Fall back to IPv4
             sock = create_udp_socket(AF_INET);
             if (sock == INVALID_SOCKET) {
-                std::cerr << std::format("Failed to create socket for CPU {}\n", i);
-                continue;
+                std::osyncstream(std::cerr) << std::format("Failed to create socket for CPU {}\n", cpu_id);
+                return nullptr;
             }
         } else {
-            // Try to make the IPv6 socket dual-stack (allow IPv4 mapped addresses)
             int v6only = 0;
             if (setsockopt(sock, IPPROTO_IPV6, IPV6_V6ONLY, reinterpret_cast<const char*>(&v6only), sizeof(v6only)) == 0) {
                 using_ipv6 = true;
             } else {
-                // Could not set dual-stack; continue using IPv6 anyway
                 using_ipv6 = true;
             }
         }
 
         ctx->socket = sock;
 
-        // Set socket CPU affinity
-        if (!set_socket_cpu_affinity(ctx->socket, static_cast<uint16_t>(i))) {
-            std::cerr << std::format("Warning: Could not set CPU affinity for socket on CPU {}\n", i);
-            // Continue anyway - affinity is an optimization
+        // Try to set socket CPU affinity (best-effort)
+        if (!set_socket_cpu_affinity(ctx->socket, static_cast<uint16_t>(cpu_id))) {
+            std::osyncstream(std::cerr) << std::format("Warning: Could not set CPU affinity for socket on CPU {}\n", cpu_id);
         }
 
-        // Increase socket buffer sizes to reduce drops
+        // Increase socket buffers (best-effort)
         if (setsockopt(ctx->socket, SOL_SOCKET, SO_RCVBUF, reinterpret_cast<const char*>(&recvbuf), sizeof(recvbuf)) != 0) {
-            std::cerr << std::format("Warning: Could not set SO_RCVBUF to {} on CPU {}: {}\n", recvbuf, i, get_last_error_message());
+            std::osyncstream(std::cerr) << std::format("Warning: Could not set SO_RCVBUF to {} on CPU {}: {}\n", recvbuf, cpu_id, get_last_error_message());
         }
         int sndbuf = recvbuf;
         if (setsockopt(ctx->socket, SOL_SOCKET, SO_SNDBUF, reinterpret_cast<const char*>(&sndbuf), sizeof(sndbuf)) != 0) {
-            std::cerr << std::format("Warning: Could not set SO_SNDBUF to {} on CPU {}: {}\n", sndbuf, i, get_last_error_message());
+            std::osyncstream(std::cerr) << std::format("Warning: Could not set SO_SNDBUF to {} on CPU {}: {}\n", sndbuf, cpu_id, get_last_error_message());
         }
 
-        // Bind socket to port (match family)
+        // Bind socket to the requested port
         bool bind_ok = false;
         if (using_ipv6) {
             sockaddr_in6 addr6 = {};
@@ -282,21 +311,26 @@ int main(int argc, char* argv[]) {
         }
 
         if (!bind_ok) {
-            std::cerr << std::format("Failed to bind socket for CPU {}\n", i);
+            std::osyncstream(std::cerr) << std::format("Failed to bind socket for CPU {}\n", cpu_id);
             closesocket(ctx->socket);
-            continue;
+            return nullptr;
         }
 
         // Create IOCP and associate socket
         ctx->iocp = create_iocp_and_associate(ctx->socket);
         if (ctx->iocp == nullptr) {
-            std::cerr << std::format("Failed to create IOCP for CPU {}\n", i);
+            std::osyncstream(std::cerr) << std::format("Failed to create IOCP for CPU {}\n", cpu_id);
             closesocket(ctx->socket);
-            continue;
+            return nullptr;
         }
 
-        std::cout << std::format("Created socket and IOCP for CPU {}\n", i);
-        workers.push_back(std::move(ctx));
+        std::osyncstream(std::cout) << std::format("Created socket and IOCP for CPU {}\n", cpu_id);
+        return ctx;
+    };
+
+    for (uint32_t i = 0; i < num_workers; ++i) {
+        auto ctx = create_worker(i);
+        if (ctx) workers.push_back(std::move(ctx));
     }
 
     if (workers.empty()) {
@@ -306,54 +340,61 @@ int main(int argc, char* argv[]) {
     }
 
     // Start worker threads
-    for (auto& ctx : workers) {
-        ctx->worker_thread = std::thread(worker_thread_func, ctx.get());
-    }
+    auto start_worker_threads = [&](std::vector<std::unique_ptr<worker_context>>& wks) {
+        for (auto& ctx : wks) {
+            ctx->worker_thread = std::thread(worker_thread_func, ctx.get());
+        }
+    };
 
-    std::cout << std::format("\nServer running on port {}. Press Ctrl+C to stop.\n\n", port);
+    auto close_iocps = [&](std::vector<std::unique_ptr<worker_context>>& wks) {
+        for (auto& ctx : wks) {
+            if (ctx->iocp != nullptr) CloseHandle(ctx->iocp);
+        }
+    };
 
-    // Wait for shutdown
+    auto join_and_cleanup_workers = [&](std::vector<std::unique_ptr<worker_context>>& wks) {
+        for (auto& ctx : wks) {
+            if (ctx->worker_thread.joinable()) ctx->worker_thread.join();
+        }
+
+        for (auto& ctx : wks) {
+            if (ctx->socket != INVALID_SOCKET) closesocket(ctx->socket);
+        }
+    };
+
+    auto print_final_stats = [&](const std::vector<std::unique_ptr<worker_context>>& wks) {
+        uint64_t total_recv = 0, total_sent = 0, total_bytes_recv = 0, total_bytes_sent = 0;
+        for (const auto& ctx : wks) {
+            total_recv += ctx->packets_received.load();
+            total_sent += ctx->packets_sent.load();
+            total_bytes_recv += ctx->bytes_received.load();
+            total_bytes_sent += ctx->bytes_sent.load();
+        }
+
+        std::osyncstream(std::cout) << std::format("\nFinal Statistics:\n");
+        std::osyncstream(std::cout) << std::format("  Total packets received: {}\n", total_recv);
+        std::osyncstream(std::cout) << std::format("  Total packets sent: {}\n", total_sent);
+        std::osyncstream(std::cout) << std::format("  Total bytes received: {}\n", total_bytes_recv);
+        std::osyncstream(std::cout) << std::format("  Total bytes sent: {}\n", total_bytes_sent);
+    };
+
+    start_worker_threads(workers);
+
+    std::osyncstream(std::cout) << std::format("\nServer running on port {}. Press Ctrl+C to stop.\n\n", port);
+
+    // Wait for shutdown signal
     while (!g_shutdown.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
-    std::cout << "\nShutting down...\n";
+    std::osyncstream(std::cout) << "\nShutting down...\n";
 
-    // Close IOCPs to wake up worker threads
-    for (auto& ctx : workers) {
-        if (ctx->iocp != nullptr) {
-            CloseHandle(ctx->iocp);
-        }
-    }
+    // Close IOCPs to wake up worker threads, then join and cleanup
+    close_iocps(workers);
+    join_and_cleanup_workers(workers);
 
-    // Wait for worker threads
-    for (auto& ctx : workers) {
-        if (ctx->worker_thread.joinable()) {
-            ctx->worker_thread.join();
-        }
-    }
-
-    // Close sockets
-    for (auto& ctx : workers) {
-        if (ctx->socket != INVALID_SOCKET) {
-            closesocket(ctx->socket);
-        }
-    }
-
-    // Print final stats
-    uint64_t total_recv = 0, total_sent = 0, total_bytes_recv = 0, total_bytes_sent = 0;
-    for (const auto& ctx : workers) {
-        total_recv += ctx->packets_received.load();
-        total_sent += ctx->packets_sent.load();
-        total_bytes_recv += ctx->bytes_received.load();
-        total_bytes_sent += ctx->bytes_sent.load();
-    }
-
-    std::cout << std::format("\nFinal Statistics:\n");
-    std::cout << std::format("  Total packets received: {}\n", total_recv);
-    std::cout << std::format("  Total packets sent: {}\n", total_sent);
-    std::cout << std::format("  Total bytes received: {}\n", total_bytes_recv);
-    std::cout << std::format("  Total bytes sent: {}\n", total_bytes_sent);
+    // Print final stats and cleanup winsock
+    print_final_stats(workers);
 
     cleanup_winsock();
     return 0;

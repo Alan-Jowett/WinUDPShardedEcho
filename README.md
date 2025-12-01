@@ -34,23 +34,25 @@ cmake --build . --config Release
 ### Server
 
 ```bash
-echo_server <port> [num_cores]
+echo_server [options]
 ```
 
 Arguments:
-- `port` - UDP port to listen on (1-65535)
-- `num_cores` - (Optional) Number of CPU cores to use (default: all available)
+- `--port, -p <port>`: UDP port to listen on (required, 1-65535)
+- `--cores, -c <num_cores>`: (Optional) Number of CPU cores to use (default: all available)
+- `--recvbuf, -b <bytes>`: (Optional) Socket receive buffer size in bytes (default: 4194304)
+- `--help, -h`: Show help/usage
 
 Example:
 ```bash
-echo_server 5000        # Listen on port 5000 using all cores
-echo_server 5000 4      # Listen on port 5000 using 4 cores
+echo_server --port 5000                # Listen on port 5000 using all cores
+echo_server --port 5000 --cores 4      # Listen on port 5000 using 4 cores
 ```
 
 ### Client
 
 ```bash
-echo_client <server_ip> <port> [options]
+echo_client [options]
 ```
 
 **All Server Options**
@@ -133,20 +135,19 @@ echo_client --server 192.168.1.100 --port 5000 --sockets 1 --rate 10000 --payloa
    - The client can create multiple sockets per worker and associate them with the worker's IOCP
    - Each client socket is bound to a unique ephemeral source port (no SO_REUSEADDR), increasing entropy in the 5-tuple used by the OS hash
    - This helps the server's packet distribution across cores when only a single destination tuple is used
-
-3. **Thread Affinity**
+4. **Thread Affinity**
    - Worker threads are pinned to the same core as their socket
    - Ensures completion callbacks run on the same core as network I/O
    - Maximizes cache efficiency
 
-4. **Multiple Outstanding Operations**
+5. **Multiple Outstanding Operations**
    - Multiple async receive operations posted per socket
    - Prevents gaps in packet reception
    - Maximizes throughput
 
-   5. **Batched completion retrieval**
-    - Both client and server use `GetQueuedCompletionStatusEx` to retrieve multiple completions per syscall
-    - Reduces syscall overhead and improves batching of I/O completions
+6. **Batched completion retrieval**
+   - Both client and server use `GetQueuedCompletionStatusEx` to retrieve multiple completions per syscall
+   - Reduces syscall overhead and improves batching of I/O completions
 
 ## Performance Tuning
 

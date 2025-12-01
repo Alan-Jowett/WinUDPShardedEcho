@@ -184,6 +184,7 @@ void worker_thread_func(worker_context* ctx, size_t payload_size) {
             if (error == WAIT_TIMEOUT) {
                 continue;
             }
+            std::osyncstream(std::cerr) << std::format("[Worker {}] GetQueuedCompletionStatusEx failed with error: {}\n", ctx->processor_id, error);
             // On other errors just continue the loop
             continue;
         }
@@ -248,6 +249,7 @@ void print_usage(const char* program_name) {
               << "  --duration, -d <seconds>  - Test duration in seconds (default: 10)\n"
               << "  --rate, -r <pps>          - Packets per second total across all workers (0 = unlimited)\n"
               << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: 4194304 = 4MB)\n"
+              << "  --sockets, -k <n>         - Number of sockets to create per worker (default: 1)\n"
               << "  --help, -h                - Show this help\n";
 }
 

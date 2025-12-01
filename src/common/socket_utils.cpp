@@ -80,6 +80,13 @@ bool associate_socket_with_iocp(SOCKET sock, HANDLE iocp, ULONG_PTR completion_k
 }
 
 bool set_thread_affinity(uint32_t processor_id) {
+    // Validate processor_id is within the range of group 0
+    DWORD group0_count = GetActiveProcessorCount(0);
+    if (processor_id >= group0_count) {
+        std::cerr << std::format("Processor ID {} is out of range for group 0 ({} processors)\n", processor_id, group0_count);
+        return false;
+    }
+
     GROUP_AFFINITY affinity = {};
     affinity.Group = 0;
     affinity.Mask = 1ULL << processor_id;
@@ -186,13 +193,14 @@ bool post_send(SOCKET sock, io_context* ctx, const char* data, size_t len,
 
 uint64_t get_timestamp_ns() {
     static LARGE_INTEGER frequency = {};
-    if (frequency.QuadPart == 0) {
+    static std::once_flag freq_once;
+    std::call_once(freq_once, [&](){
         QueryPerformanceFrequency(&frequency);
-    }
-    
+    });
+
     LARGE_INTEGER counter;
     QueryPerformanceCounter(&counter);
-    
+
     // Convert to nanoseconds
     return static_cast<uint64_t>(counter.QuadPart * 1000000000ULL / frequency.QuadPart);
 }
