@@ -44,6 +44,8 @@
 std::atomic<bool> g_shutdown{false};
 // Global verbose flag; enable more verbose runtime output when true.
 std::atomic<bool> g_verbose{false};
+// If true, reply synchronously via `sendto` instead of posting overlapped sends.
+std::atomic<bool> g_sync_reply{false};
 
 /**
  * @brief Signal handler that requests shutdown.
@@ -176,6 +178,22 @@ void worker_thread_func(server_worker_context* ctx) try {
                 bool needs_send = handle_recv_completion(io_ctx, bytes_transferred);
 
                 if (needs_send) {
+                    if (g_sync_reply.load()) {
+                        try {
+                            int sent = send_sync(ctx->socket, io_ctx->buffer.data(), bytes_transferred,
+                                                 reinterpret_cast<sockaddr*>(&io_ctx->remote_addr),
+                                                 io_ctx->remote_addr_len);
+                            ctx->packets_sent.fetch_add(1);
+                            ctx->bytes_sent.fetch_add(sent);
+                        } catch (const std::exception& ex) {
+                            std::osyncstream(std::cerr) << std::format(
+                                "[CPU {}] sync send failed: {}\n", ctx->processor_id, ex.what());
+                        }
+                        // Re-post receive and continue
+                        post_recv(ctx->socket, io_ctx);
+                        continue;
+                    }
+
                     // Acquire a send context from the pool
                     io_context* send_ctx = nullptr;
                     if (!available_send_contexts.empty()) {
@@ -230,15 +248,16 @@ void worker_thread_func(server_worker_context* ctx) try {
  * @brief Print usage/help text to stdout.
  */
 void print_usage(const char* program_name) {
-    std::cout << "Usage: " << program_name << " [options]\n"
-              << "Options:\n"
-              << "  --port, -p <port>         - UDP port to listen on (default: 7)\n"
-              << "  --duration, -d <seconds>  - Run for N seconds then exit (0 = unlimited)\n"
-              << "  --cores, -c <n>           - Number of cores to use (default: all available)\n"
-              << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
-                 "4194304 = 4MB)\n"
-              << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
-              << "  --help, -h                - Show this help\n";
+     std::cout << "Usage: " << program_name << " [options]\n"
+                  << "Options:\n"
+                  << "  --port, -p <port>         - UDP port to listen on (default: 7)\n"
+                  << "  --duration, -d <seconds>  - Run for N seconds then exit (0 = unlimited)\n"
+                  << "  --cores, -c <n>           - Number of cores to use (default: all available)\n"
+                  << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
+                      "4194304 = 4MB)\n"
+                  << "  --sync-reply, -s          - Reply synchronously using sendto (default: async IO)\n"
+                  << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
+                  << "  --help, -h                - Show this help\n";
 }
 
 /**
@@ -254,6 +273,7 @@ int main(int argc, char* argv[]) try {
     parser.add_option("duration", 'd', "0", true);
     parser.add_option("cores", 'c', "0", true);
     parser.add_option("recvbuf", 'b', "4194304", true);
+    parser.add_option("sync-reply", 's', "0", false);
     parser.add_option("help", 'h', "0", false);
     parser.parse(argc, argv);
 
@@ -267,8 +287,12 @@ int main(int argc, char* argv[]) try {
     const std::string recvbuf_str = parser.get("recvbuf");
     const std::string duration_str = parser.get("duration");
     const std::string verbose_str = parser.get("verbose");
+    const std::string sync_reply_str = parser.get("sync-reply");
     if (!verbose_str.empty() && verbose_str != "0") {
         g_verbose.store(true);
+    }
+    if (!sync_reply_str.empty() && sync_reply_str != "0") {
+        g_sync_reply.store(true);
     }
 
     if (port_str.empty()) {

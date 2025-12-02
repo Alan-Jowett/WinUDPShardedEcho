@@ -174,3 +174,22 @@ The client tracks and reports:
 ## License
 
 MIT License - See [LICENSE](LICENSE) for details
+
+## Synchronous Replies vs Overlapped IO
+
+The server supports two reply modes: synchronous blocking replies using `sendto` (enabled
+with `--sync-reply`) and asynchronous overlapped sends using IO Completion Ports (the default).
+Choose based on your workload and goals:
+
+- **Latency (low load):** Synchronous replies can be slightly faster for very small, low-concurrency
+   workloads because they avoid queuing and completion handling overhead.
+- **Throughput (high load):** Overlapped IO with IOCP scales much better under concurrency and
+   network load. Synchronous sends may block a worker thread and cause head-of-line blocking.
+- **Resource model:** Synchronous sends do not consume send-context slots or generate completion
+   events, while overlapped sends use explicit contexts and IOCP notifications.
+- **Robustness and backpressure:** IOCP-based sends are non-blocking and integrate with the OS
+   queuing model; synchronous sends can fail or block and require inline error handling.
+
+Recommendation: keep the default overlapped IO for production and high-throughput testing. Use
+`--sync-reply` for small experiments, micro-benchmarks, or when you explicitly want the simpler
+blocking send path for diagnosis.

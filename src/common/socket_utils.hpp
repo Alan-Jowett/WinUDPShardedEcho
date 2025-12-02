@@ -171,6 +171,16 @@ void associate_socket_with_iocp(const unique_socket& sock, unique_iocp& iocp,
                                 ULONG_PTR completion_key);
 
 /**
+ * @brief Wrapper around SetFileCompletionNotificationModes that throws on failure.
+ *
+ * @param handle File handle to set completion notification modes on.
+ * @param flags Flags passed to SetFileCompletionNotificationModes (default: skip
+ *              completion port on success).
+ * @throws socket_exception on failure.
+ */
+void set_file_completion_notification_modes(HANDLE handle, UCHAR flags = FILE_SKIP_SET_EVENT_ON_HANDLE);
+
+/**
  * @brief Set the current thread's processor affinity.
  *
  * This is used by worker threads that should be pinned to a specific CPU.
@@ -207,6 +217,14 @@ void post_recv(const unique_socket& sock, io_context* ctx);
  */
 void post_send(const unique_socket& sock, io_context* ctx, const char* data, size_t len,
                const sockaddr* dest_addr, int dest_addr_len);
+
+/**
+ * @brief Synchronously send a UDP datagram using `sendto`.
+ *
+ * Returns number of bytes sent on success, or throws socket_exception on error.
+ */
+int send_sync(const unique_socket& sock, const char* data, size_t len, const sockaddr* dest_addr,
+              int dest_addr_len);
 
 /**
  * @brief Return a monotonic timestamp in nanoseconds.

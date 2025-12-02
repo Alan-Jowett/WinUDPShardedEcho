@@ -95,6 +95,9 @@ unique_iocp create_iocp_and_associate(const unique_socket& sock) {
         throw socket_exception(
             std::format("CreateIoCompletionPort failed: {}", get_last_error_message()));
     }
+    // Attempt to set completion notification modes on the IOCP handle. If this
+    // fails we'll let the wrapper throw a socket_exception.
+    set_file_completion_notification_modes(reinterpret_cast<HANDLE>(sock.get()));
     return unique_iocp(iocp);
 }
 
@@ -113,6 +116,18 @@ void associate_socket_with_iocp(const unique_socket& sock, unique_iocp& iocp,
     if (result == nullptr) {
         throw socket_exception(
             std::format("CreateIoCompletionPort (associate) failed: {}", get_last_error_message()));
+    }
+    // Ensure the IOCP handle has file completion notification modes set.
+    set_file_completion_notification_modes(reinterpret_cast<HANDLE>(sock.get()));
+}
+
+/**
+ * @brief Wrapper around SetFileCompletionNotificationModes that throws on failure.
+ */
+void set_file_completion_notification_modes(HANDLE handle, UCHAR flags) {
+    
+    if (!SetFileCompletionNotificationModes(handle, flags)) {
+        throw socket_exception(std::format("SetFileCompletionNotificationModes failed: {}", get_last_error_message()));
     }
 }
 
@@ -288,6 +303,17 @@ void post_send(const unique_socket& sock, io_context* ctx, const char* data, siz
         }
     }
 }
+
+    int send_sync(const unique_socket& sock, const char* data, size_t len, const sockaddr* dest_addr,
+                  int dest_addr_len) {
+        // For UDP, sendto either sends the full datagram or fails.
+        int to_send = static_cast<int>(std::min<size_t>(len, INT_MAX));
+        int sent = sendto(sock.get(), data, to_send, 0, dest_addr, dest_addr_len);
+        if (sent == SOCKET_ERROR) {
+            throw socket_exception(std::format("sendto failed: {}", get_last_error_message()));
+        }
+        return sent;
+    }
 
 /**
  * @brief Retrieve the local socket name (getsockname) for `sock`.
