@@ -241,7 +241,8 @@ void post_recv(const unique_socket& sock, io_context* ctx) {
 
     if (result == SOCKET_ERROR) {
         int error = WSAGetLastError();
-        if (error != WSA_IO_PENDING) {
+        // Ignore WSAECONNRESET which can happen with UDP when no one is listening
+        if (error != WSA_IO_PENDING && error != WSAECONNRESET) {
             std::cerr << std::format("WSARecvFrom failed: {} ({})\n", get_last_error_message(),
                                      error);
         }
