@@ -1,5 +1,15 @@
-// Copyright (c) 2025 WinUDPShardedEcho Contributors
-// SPDX-License-Identifier: MIT
+/**
+ * @file socket_utils.hpp
+ * @brief Cross-cutting Win32 socket utilities and IOCP helpers used by the demo.
+ *
+ * This header provides small helpers and types for creating UDP sockets,
+ * posting overlapped operations and interacting with IO Completion Ports
+ * (IOCP) on Windows. It also defines packet framing constants used by the
+ * echo server/client.
+ * 
+ * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
+ * SPDX-License-Identifier: MIT
+ */
 
 #pragma once
 
@@ -27,24 +37,42 @@
 #include <utility>
 #include <vector>
 
+
 // Packet header for tracking sequence numbers
 #pragma pack(push, 1)
+/**
+ * @brief Packet framing header prepended to each UDP payload.
+ *
+ * The header includes a 64-bit sequence number and a 64-bit timestamp in
+ * nanoseconds. It is packed to avoid padding between fields.
+ */
 struct packet_header {
+    /// Monotonic sequence number assigned by sender.
     uint64_t sequence_number;
+    /// Sender timestamp in nanoseconds when the packet was created.
     uint64_t timestamp_ns;
 };
 #pragma pack(pop)
 
+/// Maximum UDP payload size (practical limit for IPv4/IPv6 datagrams).
 constexpr size_t MAX_PACKET_SIZE = 65507;  // Max UDP payload size
+/// Size of the packet header defined above.
 constexpr size_t HEADER_SIZE = sizeof(packet_header);
+/// Maximum application payload size after subtracting the header.
 constexpr size_t MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE;
 
 // Shared configuration constants
+/// Number of simultaneous outstanding asynchronous I/O operations per socket.
 constexpr size_t OUTSTANDING_OPS = 16;            // Number of outstanding I/O operations per socket
+/// Timeout in milliseconds used when polling an IOCP for events.
 constexpr DWORD IOCP_TIMEOUT_MS = 10;             // IOCP polling timeout in milliseconds
+/// Timeout used specifically during shutdown checks on the IOCP.
 constexpr DWORD IOCP_SHUTDOWN_TIMEOUT_MS = 1000;  // IOCP timeout for shutdown check
 
-// Operation types for IOCP
+/**
+ * @brief Operation type stored in the per-I/O context to indicate whether
+ * the overlapped operation was a receive or a send.
+ */
 enum class io_operation_type { recv, send };
 
 // Define RAII wrapper for SOCKET
@@ -52,18 +80,32 @@ using unique_socket = wil::unique_socket;
 
 using unique_iocp = wil::unique_handle;
 
-// Define a custom exception for socket errors
+/**
+ * @brief Exception type thrown on socket-related failures.
+ */
 class socket_exception : public std::runtime_error {
    public:
     explicit socket_exception(const std::string& message) : std::runtime_error(message) {}
 };
 
-// Overlapped structure with additional context for IOCP
+/**
+ * @brief Overlapped context extended with additional metadata for IOCP.
+ *
+ * Instances of `io_context` are allocated per outstanding operation and
+ * posted to Winsock APIs. They embed a `WSABUF` and backing buffer, the
+ * remote peer address storage and an `io_operation_type` to disambiguate
+ * completion handling.
+ */
 struct io_context : OVERLAPPED {
+    /// Operation type (recv or send).
     io_operation_type operation;
+    /// WSABUF pointing at the `buffer` storage.
     WSABUF wsa_buf;
+    /// Backing storage for the packet (includes header + payload).
     std::vector<char> buffer;
+    /// Storage for the remote peer address.
     sockaddr_storage remote_addr;
+    /// Length of the remote address in bytes.
     int remote_addr_len;
 
     io_context()
@@ -75,53 +117,110 @@ struct io_context : OVERLAPPED {
     }
 };
 
-// Initialize Winsock
+/**
+ * @name Winsock lifecycle
+ * Helper functions to initialize and cleanup the Winsock stack.
+ */
+//@{
+/// Initialize Winsock. Must be called before socket operations.
 void initialize_winsock();
 
-// Cleanup Winsock
+/// Cleanup Winsock. Call during shutdown to release resources.
 void cleanup_winsock();
+//@}
 
-// Create a UDP socket (pass AF_INET or AF_INET6). Default is AF_INET.
+/**
+ * @brief Create a UDP socket for the specified address family.
+ *
+ * @param family Address family (AF_INET or AF_INET6). Defaults to AF_INET.
+ * @return A RAII `unique_socket` owning the created SOCKET.
+ */
 unique_socket create_udp_socket(int family = AF_INET);
 
-// Set socket CPU affinity (Windows-specific SIO_CPU_AFFINITY)
+/**
+ * @brief Set the CPU affinity for a socket (Windows SIO_CPU_AFFINITY).
+ *
+ * @param sock The socket to configure.
+ * @param processor_id Logical processor index to bind the socket to.
+ */
 void set_socket_cpu_affinity(const unique_socket& sock, uint16_t processor_id);
 
-// Create an unassociated IOCP
+/**
+ * @brief Create an unassociated IO Completion Port (IOCP).
+ * @return A `unique_iocp` handle for the created IOCP.
+ */
 unique_iocp create_iocp();
 
-// Create IO Completion Port and associate socket
+/**
+ * @brief Create an IOCP and associate a socket with it.
+ *
+ * Convenience helper that creates an IOCP and associates `sock` so the
+ * application can begin posting asynchronous operations and receive
+ * completions via the IOCP.
+ */
 unique_iocp create_iocp_and_associate(const unique_socket& sock);
 
-// Associate socket with existing IOCP
+/**
+ * @brief Associate an existing socket with an existing IOCP.
+ *
+ * @param sock Socket to associate.
+ * @param iocp IOCP handle to associate with.
+ * @param completion_key Completion key (typically used to identify socket/thread).
+ */
 void associate_socket_with_iocp(const unique_socket& sock, unique_iocp& iocp,
                                 ULONG_PTR completion_key);
 
-// Set thread CPU affinity
+/**
+ * @brief Set the current thread's processor affinity.
+ *
+ * This is used by worker threads that should be pinned to a specific CPU.
+ */
 void set_thread_affinity(uint32_t processor_id);
 
-// Get number of processors
+/**
+ * @brief Query the number of logical processors available on the system.
+ */
 uint32_t get_processor_count();
 
-// Bind socket to address and port (specify family: AF_INET or AF_INET6)
+/**
+ * @brief Bind a UDP socket to the given port and address family.
+ *
+ * Throws `socket_exception` on failure.
+ */
 void bind_socket(const unique_socket& sock, uint16_t port, int family = AF_INET);
 
-// Helper that calls setsockopt on `sock` and throws `socket_exception` on failure
+/**
+ * @brief Helper around `setsockopt` that throws `socket_exception` on error.
+ */
 void set_socket_option(const unique_socket& sock, int level, int optname, const char* optval,
                        int optlen);
 
-// Post an async receive operation
+/**
+ * @brief Post an asynchronous receive (WSARecvFrom) using the provided context.
+ */
 void post_recv(const unique_socket& sock, io_context* ctx);
 
-// Post an async send operation
+/**
+ * @brief Post an asynchronous send (WSASendTo) using the provided context.
+ *
+ * The `data` pointer is copied into the `ctx->buffer` prior to posting.
+ */
 void post_send(const unique_socket& sock, io_context* ctx, const char* data, size_t len,
                const sockaddr* dest_addr, int dest_addr_len);
 
-// Get current timestamp in nanoseconds
+/**
+ * @brief Return a monotonic timestamp in nanoseconds.
+ */
 uint64_t get_timestamp_ns();
 
-// Get local socket name (throws on failure)
+/**
+ * @brief Return the local socket address (sockname) for a socket.
+ *
+ * @return Pair of `sockaddr_storage` and length; throws on error.
+ */
 std::pair<sockaddr_storage, int> get_socket_name(const unique_socket& sock);
 
-// Format error message
+/**
+ * @brief Format the last Win32 socket error into a human-readable string.
+ */
 std::string get_last_error_message();

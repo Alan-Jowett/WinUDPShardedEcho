@@ -1,5 +1,15 @@
-// Copyright (c) 2025 WinUDPShardedEcho Contributors
-// SPDX-License-Identifier: MIT
+/**
+ * @file main.cpp
+ * @brief Scalable UDP echo client.
+ *
+ * The client creates one or more worker threads per CPU. Each worker affinitizes
+ * sockets and threads to a specific logical processor, posts asynchronous
+ * receives, and sends UDP packets containing a sequence number and timestamp.
+ * Received echoes are used to compute RTT and detect lost packets.
+ * 
+ * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
+ * SPDX-License-Identifier: MIT
+ */
 
 // Scalable UDP Echo Client
 // - Opens a socket per CPU core
@@ -20,39 +30,60 @@
 #include "common/arg_parser.hpp"
 #include "common/socket_utils.hpp"
 
-// Global flag for shutdown
+
+// Global flag for shutdown; set to true to request orderly termination.
 std::atomic<bool> g_shutdown{false};
-// Global verbose flag
+// Global verbose flag; when true, additional runtime information is logged.
 std::atomic<bool> g_verbose{false};
 
-// Signal handler
+/**
+ * @brief Signal handler that requests shutdown.
+ *
+ * Sets `g_shutdown` to true so worker threads can exit cleanly.
+ */
 void signal_handler(int) {
     g_shutdown.store(true);
 }
 
-// Worker context for each CPU/socket pair
+/**
+ * @brief Per-worker context holding sockets, IOCP and statistics.
+ *
+ * Each worker owns one IOCP and one or more UDP sockets affinitized to the
+ * worker's processor. The struct tracks per-worker counters for sent/recv
+ * packets, outstanding sequence numbers, and RTT aggregates.
+ */
 struct client_worker_context {
+    /// Logical processor this worker is affinitized to.
     uint32_t processor_id;
+    /// UDP sockets owned by this worker.
     std::vector<unique_socket> sockets;
+    /// IO Completion Port used by this worker.
     unique_iocp iocp;
+    /// Worker thread instance.
     std::thread worker_thread;
+    /// Next sequence number to use for outgoing packets.
     std::atomic<uint64_t> next_sequence{0};
+    /// Counters for packets sent/received/dropped.
     std::atomic<uint64_t> packets_sent{0};
     std::atomic<uint64_t> packets_received{0};
     std::atomic<uint64_t> packets_dropped{0};
+    /// Counters for bytes sent/received and RTT aggregations.
     std::atomic<uint64_t> bytes_sent{0};
     std::atomic<uint64_t> bytes_received{0};
     std::atomic<uint64_t> total_rtt_ns{0};
     std::atomic<uint64_t> min_rtt_ns{UINT64_MAX};
     std::atomic<uint64_t> max_rtt_ns{0};
 
+    /// Outstanding sequence numbers awaiting echo responses.
     std::unordered_set<uint64_t> outstanding_sequences;
 
-    // Target server
+    /// Target server address to send packets to.
     sockaddr_storage server_addr;
+    /// Length of `server_addr`.
     int server_addr_len;
-    // Per-worker packet rate assigned from the global total (packets/sec)
+    /// Per-worker packet rate (packets per second) assigned from global total.
     uint64_t per_worker_rate{0};
+    /// Index used to round-robin across multiple sockets.
     std::atomic<size_t> next_socket_index{0};
 };
 
@@ -60,7 +91,9 @@ struct client_worker_context {
 // Each worker will be assigned an equal share (plus remainder distribution).
 uint64_t g_rate_limit = 10000;  // default total
 
-// Update min atomically
+/**
+ * @brief Atomically update a target to the minimum of its current value and `value`.
+ */
 void update_min(std::atomic<uint64_t>& target, uint64_t value) {
     uint64_t current = target.load();
     while (value < current && !target.compare_exchange_weak(current, value)) {
@@ -68,7 +101,9 @@ void update_min(std::atomic<uint64_t>& target, uint64_t value) {
     }
 }
 
-// Update max atomically
+/**
+ * @brief Atomically update a target to the maximum of its current value and `value`.
+ */
 void update_max(std::atomic<uint64_t>& target, uint64_t value) {
     uint64_t current = target.load();
     while (value > current && !target.compare_exchange_weak(current, value)) {
@@ -76,7 +111,16 @@ void update_max(std::atomic<uint64_t>& target, uint64_t value) {
     }
 }
 
-// Worker thread function
+/**
+ * @brief Worker thread entrypoint.
+ *
+ * Each worker affinitizes the thread, posts a pool of receive operations,
+ * sends packets according to the per-worker rate quota, and processes IOCP
+ * completions for sends and receives.
+ *
+ * @param ctx Pointer to the worker context owned by the main thread.
+ * @param payload_size Size in bytes of the application payload (not including header).
+ */
 void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
     // Set thread affinity to match socket affinity
     set_thread_affinity(ctx->processor_id);
@@ -248,6 +292,9 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
     g_shutdown.store(true);
 }
 
+/**
+ * @brief Print usage/help text to stdout.
+ */
 void print_usage(const char* program_name) {
     std::cout
         << "Usage: " << program_name << " [options]\n"
@@ -266,6 +313,13 @@ void print_usage(const char* program_name) {
         << "  --help, -h                - Show this help\n";
 }
 
+/**
+ * @brief Program entry point.
+ *
+ * Parses command-line arguments, initializes Winsock, creates worker
+ * contexts and threads, runs for the requested duration and prints
+ * final statistics.
+ */
 int main(int argc, char* argv[]) try {
     // Use ArgParser for command-line parsing
     ArgParser parser;

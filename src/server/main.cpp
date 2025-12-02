@@ -1,7 +1,17 @@
-// Copyright (c) 2025 WinUDPShardedEcho Contributors
-// SPDX-License-Identifier: MIT
+/**
+ * @file main.cpp
+ * @brief Scalable UDP echo server.
+ *
+ * The server creates one listening UDP socket per CPU (for both IPv4 and
+ * IPv6), affinitizes sockets and worker threads to processors, and uses
+ * IO Completion Ports to efficiently process incoming datagrams and echo
+ * responses back to clients.
+ * 
+ * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
+ * SPDX-License-Identifier: MIT
+ */
 
-// Scalable UDP Echo Server
+ // Scalable UDP Echo Server
 // - Opens a listening socket per CPU core
 // - Uses SIO_CPU_AFFINITY to affinitize each socket
 // - Uses an IO Completion Port per listening socket
@@ -20,29 +30,57 @@
 #include "common/arg_parser.hpp"
 #include "common/socket_utils.hpp"
 
-// Global flag for shutdown
+#include <algorithm>
+#include <chrono>
+#include <csignal>
+#include <cstdlib>
+#include <format>
+#include <iostream>
+#include <numeric>
+#include <syncstream>
+#include <thread>
+
+// Global flag for shutdown; set to true to request orderly termination.
 std::atomic<bool> g_shutdown{false};
-// Global verbose flag
+// Global verbose flag; enable more verbose runtime output when true.
 std::atomic<bool> g_verbose{false};
 
-// Signal handler
+/**
+ * @brief Signal handler that requests shutdown.
+ */
 void signal_handler(int) {
     g_shutdown.store(true);
 }
 
-// Worker context for each CPU/socket pair
+/**
+ * @brief Per-worker context for server-side processing.
+ *
+ * Holds the listening socket, IOCP handle, a worker thread and basic
+ * counters for received/sent packets and bytes.
+ */
 struct server_worker_context {
+    /// Logical processor id this worker is affinitized to.
     uint32_t processor_id;
+    /// The UDP socket owned by the worker.
     unique_socket socket;
+    /// IO Completion Port associated with the socket.
     unique_iocp iocp;
+    /// Worker thread (jthread for cooperative cancellation support).
     std::jthread worker_thread;
+    /// Counters and statistics.
     std::atomic<uint64_t> packets_received{0};
     std::atomic<uint64_t> packets_sent{0};
     std::atomic<uint64_t> bytes_received{0};
     std::atomic<uint64_t> bytes_sent{0};
 };
 
-// Worker thread function
+/**
+ * @brief Worker thread entrypoint for the server.
+ *
+ * Pins the thread, posts initial receives, and loops processing IOCP
+ * completions for receives and sends. Received datagrams are echoed back
+ * to the sender in this example.
+ */
 void worker_thread_func(server_worker_context* ctx) try {
     // Set thread affinity to match socket affinity
     set_thread_affinity(ctx->processor_id);
@@ -188,6 +226,9 @@ void worker_thread_func(server_worker_context* ctx) try {
     g_shutdown.store(true);
 }
 
+/**
+ * @brief Print usage/help text to stdout.
+ */
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options]\n"
               << "Options:\n"
@@ -200,6 +241,12 @@ void print_usage(const char* program_name) {
               << "  --help, -h                - Show this help\n";
 }
 
+/**
+ * @brief Program entry point for the server.
+ *
+ * Parses options, initializes Winsock, creates worker contexts for IPv4/IPv6
+ * on each CPU, starts threads and prints aggregated statistics on shutdown.
+ */
 int main(int argc, char* argv[]) try {
     ArgParser parser;
     parser.add_option("verbose", 'v', "0", false);
