@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: MIT
-# Copyright (c) 2025 scalable_echo_server_demo Contributors
+# Copyright (c) 2025 WinUDPShardedEcho Contributors
 set -euo pipefail
 
 # Default: check staged or modified files. Use --all to check entire repo.

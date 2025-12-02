@@ -1,4 +1,4 @@
-// Copyright (c) 2025 scalable_echo_server_demo Contributors
+// Copyright (c) 2025 WinUDPShardedEcho Contributors
 // SPDX-License-Identifier: MIT
 #pragma once
 

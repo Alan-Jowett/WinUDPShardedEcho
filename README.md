@@ -1,7 +1,7 @@
 <!-- SPDX-License-Identifier: MIT
-  Copyright (c) 2025 scalable_echo_server_demo contributors -->
+  Copyright (c) 2025 WinUDPShardedEcho contributors -->
 
-# Scalable Echo Server Demo
+# WinUDPShardedEcho - A Scalable Echo Server Demo
 
 This implements RFC 862 - [Echo Protocol](https://www.rfc-editor.org/rfc/rfc862)
 

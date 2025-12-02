@@ -1,6 +1,6 @@
 <!--
 SPDX-License-Identifier: MIT
-Copyright (c) 2025 scalable_echo_server_demo contributors
+Copyright (c) 2025 WinUDPShardedEcho contributors
 -->
 This repository uses GitHub Copilot and the GitHub Copilot coding agent guidance.
 

@@ -1,8 +1,8 @@
 <!-- SPDX-License-Identifier: MIT
-  Copyright (c) 2025 scalable_echo_server_demo contributors -->
-# Contributing to scalable_echo_server_demo
+  Copyright (c) 2025 WinUDPShardedEcho contributors -->
+# Contributing to WinUDPShardedEcho
 
-Thanks for helping improve `scalable_echo_server_demo` — a small C++ echo server / client demo used to illustrate scalable I/O patterns and build/test workflows on Windows (MSVC + CMake).
+Thanks for helping improve `WinUDPShardedEcho` — a small C++ echo server / client demo used to illustrate scalable I/O patterns and build/test workflows on Windows (MSVC + CMake).
 
 Please read the guidelines below before opening issues or pull requests.
 
@@ -13,8 +13,8 @@ Please read the guidelines below before opening issues or pull requests.
 1. Fork the repository on GitHub and clone your fork locally:
 
 ```pwsh
-git clone https://github.com/<your-username>/scalable_echo_server_demo.git
-cd scalable_echo_server_demo
+git clone https://github.com/<your-username>/WinUDPShardedEcho.git
+cd WinUDPShardedEcho
 ```
 
 2. Create a feature branch:
@@ -32,7 +32,7 @@ cmake -S .. -B . -A x64
 cmake --build . --config Release
 ```
 
-Or open `build/scalable_echo_server_demo.sln` in Visual Studio and build from the IDE.
+Or open `build/WinUDPShardedEcho.sln` in Visual Studio and build from the IDE.
 
 ---
 
