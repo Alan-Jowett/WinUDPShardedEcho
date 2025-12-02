@@ -331,7 +331,7 @@ int main(int argc, char* argv[]) try {
     parser.add_option("duration", 'd', "10", true);
     parser.add_option("rate", 'r', "10000", true);
     parser.add_option("recvbuf", 'b', "4194304", true);
-    parser.add_option("sockets", 'k', "1", true);
+    parser.add_option("sockets", 'k', "16", true);
     parser.add_option("help", 'h', "0", false);
 
     parser.parse(argc, argv);
