@@ -239,9 +239,13 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
 } catch (const std::exception& ex) {
     std::osyncstream(std::cerr) << std::format("[CPU {}] Worker thread exception: {}\n",
                                                ctx->processor_id, ex.what());
+    // Shutdown on unhandled exception
+    g_shutdown.store(true);
 } catch (...) {
     std::osyncstream(std::cerr) << std::format("[CPU {}] Worker thread unknown exception\n",
                                                ctx->processor_id);
+    // Shutdown on unhandled exception
+    g_shutdown.store(true);
 }
 
 void print_usage(const char* program_name) {
@@ -267,7 +271,7 @@ int main(int argc, char* argv[]) try {
     ArgParser parser;
     parser.add_option("verbose", 'v', "0", false);
     parser.add_option("server", 's', "", true);
-    parser.add_option("port", 'p', "", true);
+    parser.add_option("port", 'p', "7", true); // Note: The IANA-assigned port for echo is 7
     parser.add_option("payload", 'l', "64", true);
     parser.add_option("cores", 'c', "0", true);
     parser.add_option("duration", 'd', "10", true);

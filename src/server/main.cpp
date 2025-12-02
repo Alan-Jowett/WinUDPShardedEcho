@@ -179,15 +179,19 @@ void worker_thread_func(server_worker_context* ctx) try {
 } catch (const std::exception& ex) {
     std::osyncstream(std::cerr) << std::format("[CPU {}] Worker thread exception: {}\n",
                                                ctx->processor_id, ex.what());
+    // Shutdown on unhandled exception
+    g_shutdown.store(true);
 } catch (...) {
     std::osyncstream(std::cerr) << std::format("[CPU {}] Worker thread unknown exception\n",
                                                ctx->processor_id);
+    // Shutdown on unhandled exception
+    g_shutdown.store(true);
 }
 
 void print_usage(const char* program_name) {
     std::cout << "Usage: " << program_name << " [options]\n"
               << "Options:\n"
-              << "  --port, -p <port>         - UDP port to listen on (required)\n"
+              << "  --port, -p <port>         - UDP port to listen on (default: 7)\n"
               << "  --duration, -d <seconds>  - Run for N seconds then exit (0 = unlimited)\n"
               << "  --cores, -c <n>           - Number of cores to use (default: all available)\n"
               << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
@@ -199,7 +203,7 @@ void print_usage(const char* program_name) {
 int main(int argc, char* argv[]) try {
     ArgParser parser;
     parser.add_option("verbose", 'v', "0", false);
-    parser.add_option("port", 'p', "", true);
+    parser.add_option("port", 'p', "7", true);  // Note: The IANA-assigned port for echo is 7
     parser.add_option("duration", 'd', "0", true);
     parser.add_option("cores", 'c', "0", true);
     parser.add_option("recvbuf", 'b', "4194304", true);
@@ -273,19 +277,12 @@ int main(int argc, char* argv[]) try {
     std::vector<std::unique_ptr<server_worker_context>> workers;
 
     // Helper to create and initialize a single worker context for a given CPU id.
-    auto create_worker = [&](uint32_t cpu_id) -> std::unique_ptr<server_worker_context> {
+    auto create_worker = [&](uint32_t cpu_id,
+                             int address_family) -> std::unique_ptr<server_worker_context> {
         auto ctx = std::make_unique<server_worker_context>();
         ctx->processor_id = cpu_id;
 
-        // Create UDP socket (prefer IPv6, fall back to IPv4)
-        bool using_ipv6 = false;
-        try {
-            ctx->socket = create_udp_socket(AF_INET6);
-            using_ipv6 = true;
-        } catch (const socket_exception&) {
-            ctx->socket = create_udp_socket(AF_INET);
-            using_ipv6 = false;
-        }
+        ctx->socket = create_udp_socket(address_family);
 
         set_socket_cpu_affinity(ctx->socket, static_cast<uint16_t>(cpu_id));
 
@@ -296,7 +293,7 @@ int main(int argc, char* argv[]) try {
                           reinterpret_cast<const char*>(&recvbuf), sizeof(recvbuf));
 
         // Bind socket to the requested port
-        bind_socket(ctx->socket, static_cast<uint16_t>(port), using_ipv6 ? AF_INET6 : AF_INET);
+        bind_socket(ctx->socket, static_cast<uint16_t>(port), address_family);
 
         // Create IOCP and associate socket
         ctx->iocp = create_iocp_and_associate(ctx->socket);
@@ -308,8 +305,9 @@ int main(int argc, char* argv[]) try {
     };
 
     for (uint32_t i = 0; i < num_workers; ++i) {
-        auto ctx = create_worker(i);
-        if (ctx) workers.push_back(std::move(ctx));
+        // Start one worker per address family per CPU
+        workers.push_back(create_worker(i, AF_INET));
+        workers.push_back(create_worker(i, AF_INET6));
     }
 
     if (workers.empty()) {

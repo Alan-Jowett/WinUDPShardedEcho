@@ -3,6 +3,8 @@
 
 # Scalable Echo Server Demo
 
+This implements RFC 862 - [Echo Protocol](https://www.rfc-editor.org/rfc/rfc862)
+
 A high-performance UDP echo server and client implementation for Windows that demonstrates scalable network I/O using:
 
 - **SIO_CPU_AFFINITY** - Socket-level CPU affinity to distribute network I/O across cores
