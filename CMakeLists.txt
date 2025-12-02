@@ -1,9 +1,9 @@
 # SPDX-License-Identifier: MIT
-# © scalable_echo_server_demo Contributors. All rights reserved.
+# © WinUDPShardedEcho Contributors. All rights reserved.
 
 cmake_minimum_required(VERSION 3.20)
 
-project(scalable_echo_server_demo LANGUAGES CXX)
+project(WinUDPShardedEcho LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
