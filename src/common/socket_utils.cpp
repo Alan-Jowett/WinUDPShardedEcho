@@ -95,6 +95,9 @@ unique_iocp create_iocp_and_associate(const unique_socket& sock) {
         throw socket_exception(
             std::format("CreateIoCompletionPort failed: {}", get_last_error_message()));
     }
+    // Attempt to set completion notification modes on the IOCP handle. If this
+    // fails we'll let the wrapper throw a socket_exception.
+    set_file_completion_notification_modes(reinterpret_cast<HANDLE>(sock.get()));
     return unique_iocp(iocp);
 }
 
@@ -113,6 +116,18 @@ void associate_socket_with_iocp(const unique_socket& sock, unique_iocp& iocp,
     if (result == nullptr) {
         throw socket_exception(
             std::format("CreateIoCompletionPort (associate) failed: {}", get_last_error_message()));
+    }
+    // Ensure the IOCP handle has file completion notification modes set.
+    set_file_completion_notification_modes(reinterpret_cast<HANDLE>(sock.get()));
+}
+
+/**
+ * @brief Wrapper around SetFileCompletionNotificationModes that throws on failure.
+ */
+void set_file_completion_notification_modes(HANDLE handle, UCHAR flags) {
+    
+    if (!SetFileCompletionNotificationModes(handle, flags)) {
+        throw socket_exception(std::format("SetFileCompletionNotificationModes failed: {}", get_last_error_message()));
     }
 }
 

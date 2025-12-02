@@ -171,6 +171,16 @@ void associate_socket_with_iocp(const unique_socket& sock, unique_iocp& iocp,
                                 ULONG_PTR completion_key);
 
 /**
+ * @brief Wrapper around SetFileCompletionNotificationModes that throws on failure.
+ *
+ * @param handle File handle to set completion notification modes on.
+ * @param flags Flags passed to SetFileCompletionNotificationModes (default: skip
+ *              completion port on success).
+ * @throws socket_exception on failure.
+ */
+void set_file_completion_notification_modes(HANDLE handle, UCHAR flags = FILE_SKIP_SET_EVENT_ON_HANDLE);
+
+/**
  * @brief Set the current thread's processor affinity.
  *
  * This is used by worker threads that should be pinned to a specific CPU.
