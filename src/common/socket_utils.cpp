@@ -304,6 +304,17 @@ void post_send(const unique_socket& sock, io_context* ctx, const char* data, siz
     }
 }
 
+    int send_sync(const unique_socket& sock, const char* data, size_t len, const sockaddr* dest_addr,
+                  int dest_addr_len) {
+        // For UDP, sendto either sends the full datagram or fails.
+        int to_send = static_cast<int>(std::min<size_t>(len, INT_MAX));
+        int sent = sendto(sock.get(), data, to_send, 0, dest_addr, dest_addr_len);
+        if (sent == SOCKET_ERROR) {
+            throw socket_exception(std::format("sendto failed: {}", get_last_error_message()));
+        }
+        return sent;
+    }
+
 /**
  * @brief Retrieve the local socket name (getsockname) for `sock`.
  *

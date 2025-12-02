@@ -219,6 +219,14 @@ void post_send(const unique_socket& sock, io_context* ctx, const char* data, siz
                const sockaddr* dest_addr, int dest_addr_len);
 
 /**
+ * @brief Synchronously send a UDP datagram using `sendto`.
+ *
+ * Returns number of bytes sent on success, or throws socket_exception on error.
+ */
+int send_sync(const unique_socket& sock, const char* data, size_t len, const sockaddr* dest_addr,
+              int dest_addr_len);
+
+/**
  * @brief Return a monotonic timestamp in nanoseconds.
  */
 uint64_t get_timestamp_ns();
