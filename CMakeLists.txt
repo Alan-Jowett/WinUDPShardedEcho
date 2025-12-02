@@ -43,6 +43,8 @@ target_include_directories(echo_server PRIVATE
 add_executable(echo_client
     src/client/main.cpp
     src/common/socket_utils.cpp
+    src/common/tdigest.cpp
+    src/common/percentile_estimator.cpp
 )
 
 target_include_directories(echo_client PRIVATE
