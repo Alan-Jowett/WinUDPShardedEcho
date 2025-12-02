@@ -121,15 +121,14 @@ void update_max(std::atomic<uint64_t>& target, uint64_t value) {
 /**
  * @brief Merge per-worker RTT TDigests into the global RTT TDigest.
  */
-void merg_tdigest() {
-    static std::mutex mtx;
-    std::lock_guard<std::mutex> lock(mtx);
+void merge_tdigest() {
+    std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
     for (auto& worker_tdigest : g_worker_rtt_tdigests) {
         if (worker_tdigest) {
             g_overall_rtt_tdigest.merge(*worker_tdigest);
-            worker_tdigest.reset();
         }
     }
+    g_worker_rtt_tdigests.resize(0);
     g_overall_rtt_tdigest.compress();
 }
 
@@ -141,8 +140,7 @@ void tdigest_merge_thread() {
         std::this_thread::sleep_for(std::chrono::seconds(1));
 
         // Merge per-worker RTT TDigests into global
-        {
-        }
+        merge_tdigest();
     }
 }
 
@@ -152,13 +150,13 @@ void tdigest_merge_thread() {
  * @param[in,out] current_digest The current per-worker TDigest.
  * @param[in] rtt_ns The RTT sample in nanoseconds.
  */
-void post_rtt(std::unique_ptr<TDigest>& current_digest, uint64_t rtt_ns) {
+void post_rtt(std::unique_ptr<TDigest>& current_digest, uint64_t rotate_threshold, uint64_t rtt_ns) {
     if (!current_digest) {
         current_digest = std::make_unique<TDigest>(100.0);
     }
     current_digest->add(static_cast<double>(rtt_ns) / 1'000'000.0); // convert to ms
 
-    if (current_digest->total_weight() >= 10000.0) {
+    if (current_digest->total_weight() >= static_cast<double>(rotate_threshold)) {
         // Post to global for merging
         {
             std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
@@ -312,7 +310,8 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
                     ctx->total_rtt_ns.fetch_add(rtt);
                     update_min(ctx->min_rtt_ns, rtt);
                     update_max(ctx->max_rtt_ns, rtt);
-                    post_rtt(ctx->curren_rtt_tdigest, rtt);
+                    // Rotate approximately once a second based on rate.
+                    post_rtt(ctx->curren_rtt_tdigest, ctx->per_worker_rate, rtt);
                     ctx->outstanding_sequences.erase(header->sequence_number);
                 }
 
@@ -666,7 +665,7 @@ int main(int argc, char* argv[]) try {
 
     tdigest_thread.join();
 
-    merg_tdigest();
+    merge_tdigest();
 
     // Calculate and print final stats
     uint64_t total_sent = 0, total_recv = 0, total_dropped = 0;
@@ -688,10 +687,11 @@ int main(int argc, char* argv[]) try {
         if (worker_max > max_rtt) max_rtt = worker_max;
     }
 
-    double avg_rtt_us =
-        total_recv > 0 ? (static_cast<double>(total_rtt) / total_recv / 1000.0) : 0.0;
-    double min_rtt_us = min_rtt != UINT64_MAX ? static_cast<double>(min_rtt) / 1000.0 : 0.0;
-    double max_rtt_us = static_cast<double>(max_rtt) / 1000.0;
+    // Convert RTT aggregates from nanoseconds into milliseconds for display
+    double avg_rtt_ms =
+        total_recv > 0 ? (static_cast<double>(total_rtt) / total_recv / 1'000'000.0) : 0.0;
+    double min_rtt_ms = min_rtt != UINT64_MAX ? static_cast<double>(min_rtt) / 1'000'000.0 : 0.0;
+    double max_rtt_ms = static_cast<double>(max_rtt) / 1'000'000.0;
 
     auto actual_duration = std::chrono::steady_clock::now() - start_time;
     double duration_s =
@@ -709,9 +709,10 @@ int main(int argc, char* argv[]) try {
                              total_sent > 0 ? (100.0 * total_dropped / total_sent) : 0.0);
     std::cout << std::format("Bytes sent: {} ({:.2f} Mbps)\n", total_bytes_sent, mbps_sent);
     std::cout << std::format("Bytes received: {} ({:.2f} Mbps)\n", total_bytes_recv, mbps_recv);
-    std::cout << std::format("RTT (min/avg/max): {:.2f}/{:.2f}/{:.2f} us\n", min_rtt_us, avg_rtt_us,
-                             max_rtt_us);
+    std::cout << std::format("RTT (min/avg/max): {:.2f}/{:.2f}/{:.2f} ms\n", min_rtt_ms,
+                             avg_rtt_ms, max_rtt_ms);
 
+    // TDigest stores RTT samples in milliseconds, so percentiles are in ms as well.
     std::cout << std::format("RTT Percentiles (ms): p50={:.2f} p90={:.2f} p99={:.2f} p99.9={:.2f}\n",
                                 g_overall_rtt_tdigest.percentile(0.50),
                                 g_overall_rtt_tdigest.percentile(0.90),
