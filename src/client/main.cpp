@@ -26,6 +26,8 @@
 #include <mutex>
 #include <syncstream>
 #include <unordered_set>
+#include <fstream>
+#include <iomanip>
 
 #include "common/arg_parser.hpp"
 #include "common/socket_utils.hpp"
@@ -379,7 +381,8 @@ void print_usage(const char* program_name) {
         << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
            "4194304 = 4MB)\n"
         << "  --sockets, -k <n>         - Number of sockets to create per worker (default: 1)\n"
-        << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
+          << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
+          << "  --stats-file, -o <path>   - Write final run statistics as JSON to file\n"
         << "  --help, -h                - Show this help\n";
 }
 
@@ -402,6 +405,7 @@ int main(int argc, char* argv[]) try {
     parser.add_option("rate", 'r', "10000", true);
     parser.add_option("recvbuf", 'b', "4194304", true);
     parser.add_option("sockets", 'k', "16", true);
+    parser.add_option("stats-file", 'o', "", true);
     parser.add_option("help", 'h', "0", false);
 
     parser.parse(argc, argv);
@@ -419,6 +423,7 @@ int main(int argc, char* argv[]) try {
     const std::string rate_str = parser.get("rate");
     const std::string recvbuf_str = parser.get("recvbuf");
     const std::string sockets_str = parser.get("sockets");
+    const std::string stats_file = parser.get("stats-file");
     const std::string verbose_str = parser.get("verbose");
     size_t payload_size = 0;
     int duration_sec = 0;
@@ -724,6 +729,40 @@ int main(int argc, char* argv[]) try {
                                 g_overall_rtt_tdigest.percentile(0.90),
                                 g_overall_rtt_tdigest.percentile(0.99),
                                 g_overall_rtt_tdigest.percentile(0.999));
+
+    // Optionally write final statistics to a file as JSON if requested
+    if (!stats_file.empty()) {
+        std::ofstream ofs(stats_file, std::ios::out | std::ios::trunc);
+        if (!ofs) {
+            std::cerr << std::format("Failed to open stats file '{}' for writing\n", stats_file);
+        } else {
+            ofs << std::fixed << std::setprecision(2);
+            // Build simple JSON object
+            double drop_pct = total_sent > 0 ? (100.0 * total_dropped / total_sent) : 0.0;
+            ofs << "{\n";
+            ofs << std::format("  \"duration_s\": {:.2f},\n", duration_s);
+            ofs << std::format("  \"packets_sent\": {},\n", total_sent);
+            ofs << std::format("  \"packets_received\": {},\n", total_recv);
+            ofs << std::format("  \"packets_dropped\": {},\n", total_dropped);
+            ofs << std::format("  \"packets_dropped_pct\": {:.2f},\n", drop_pct);
+            ofs << std::format("  \"pps_sent\": {:.2f},\n", pps_sent);
+            ofs << std::format("  \"pps_recv\": {:.2f},\n", pps_recv);
+            ofs << std::format("  \"bytes_sent\": {},\n", total_bytes_sent);
+            ofs << std::format("  \"bytes_received\": {},\n", total_bytes_recv);
+            ofs << std::format("  \"mbps_sent\": {:.2f},\n", mbps_sent);
+            ofs << std::format("  \"mbps_recv\": {:.2f},\n", mbps_recv);
+            ofs << std::format("  \"rtt_min_ms\": {:.2f},\n", min_rtt_ms);
+            ofs << std::format("  \"rtt_avg_ms\": {:.2f},\n", avg_rtt_ms);
+            ofs << std::format("  \"rtt_max_ms\": {:.2f},\n", max_rtt_ms);
+            ofs << std::format("  \"rtt_p50_ms\": {:.2f},\n", g_overall_rtt_tdigest.percentile(0.50));
+            ofs << std::format("  \"rtt_p90_ms\": {:.2f},\n", g_overall_rtt_tdigest.percentile(0.90));
+            ofs << std::format("  \"rtt_p99_ms\": {:.2f},\n", g_overall_rtt_tdigest.percentile(0.99));
+            ofs << std::format("  \"rtt_p999_ms\": {:.2f}\n", g_overall_rtt_tdigest.percentile(0.999));
+            ofs << "}\n";
+            ofs.close();
+            if (g_verbose.load()) std::cout << std::format("Wrote JSON stats to {}\n", stats_file);
+        }
+    }
 
     cleanup_winsock();
     return 0;
