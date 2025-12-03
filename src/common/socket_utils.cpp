@@ -155,21 +155,45 @@ unique_iocp create_iocp() {
  *                          the group affinity fails.
  */
 void set_thread_affinity(uint32_t processor_id) {
-    // Validate processor_id is within the range of group 0
-    DWORD group0_count = GetActiveProcessorCount(0);
-    if (processor_id >= group0_count) {
-        throw socket_exception(
-            std::format("Processor ID {} is out of range for group 0 ({} processors)", processor_id,
-                        group0_count));
+    // Treat `processor_id` as a global logical processor index. Resolve it
+    // into a (group, index) pair and set the thread's GROUP_AFFINITY. This
+    // correctly supports systems with >64 logical processors (processor
+    // groups).
+    WORD groupCount = GetActiveProcessorGroupCount();
+    if (groupCount == 0) {
+        throw socket_exception("No processor groups found");
+    }
+
+    // Map global processor index to (group, index) by walking groups and
+    // subtracting their active processor counts. This correctly handles
+    // uneven group sizes and systems with arbitrary group layouts.
+    uint32_t remaining = processor_id;
+    WORD target_group = 0;
+    DWORD target_index = 0;
+    bool found = false;
+
+    for (WORD g = 0; g < groupCount; ++g) {
+        DWORD cnt = GetActiveProcessorCount(g);
+        if (remaining < cnt) {
+            target_group = g;
+            target_index = remaining;
+            found = true;
+            break;
+        }
+        remaining -= cnt;
+    }
+
+    if (!found) {
+        throw socket_exception(std::format("Processor ID {} is out of range ({} logical processors)", processor_id, processor_id + 1u));
     }
 
     GROUP_AFFINITY affinity = {};
-    affinity.Group = 0;
-    affinity.Mask = 1ULL << processor_id;
+    affinity.Group = target_group;
+    affinity.Mask = static_cast<KAFFINITY>(1ULL) << target_index;
 
     if (!SetThreadGroupAffinity(GetCurrentThread(), &affinity, nullptr)) {
-        throw socket_exception(std::format("SetThreadGroupAffinity failed for processor {}: {}",
-                                           processor_id, get_last_error_message()));
+        throw socket_exception(std::format(
+            "SetThreadGroupAffinity failed for processor {}: {}", processor_id, get_last_error_message()));
     }
 }
 

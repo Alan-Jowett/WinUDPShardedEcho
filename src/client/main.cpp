@@ -29,6 +29,7 @@
 
 #include "common/arg_parser.hpp"
 #include "common/socket_utils.hpp"
+#include "common/tdigest.hpp"
 
 
 // Global flag for shutdown; set to true to request orderly termination.
@@ -85,11 +86,18 @@ struct client_worker_context {
     uint64_t per_worker_rate{0};
     /// Index used to round-robin across multiple sockets.
     std::atomic<size_t> next_socket_index{0};
+
+    std::unique_ptr<TDigest> curren_rtt_tdigest;
 };
+
+std::mutex g_worker_contexts_mutex;
+std::vector<std::unique_ptr<TDigest>> g_worker_rtt_tdigests; ///< Digest posted by each worker for merging.
 
 // Packet rate limit total across all workers (packets per second, 0 = unlimited)
 // Each worker will be assigned an equal share (plus remainder distribution).
 uint64_t g_rate_limit = 10000;  // default total
+
+TDigest g_overall_rtt_tdigest(100.0); ///< Global RTT TDigest for percentile estimation
 
 /**
  * @brief Atomically update a target to the minimum of its current value and `value`.
@@ -108,6 +116,53 @@ void update_max(std::atomic<uint64_t>& target, uint64_t value) {
     uint64_t current = target.load();
     while (value > current && !target.compare_exchange_weak(current, value)) {
         // current is updated by compare_exchange_weak
+    }
+}
+/**
+ * @brief Merge per-worker RTT TDigests into the global RTT TDigest.
+ */
+void merge_tdigest() {
+    std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
+    for (auto& worker_tdigest : g_worker_rtt_tdigests) {
+        if (worker_tdigest) {
+            g_overall_rtt_tdigest.merge(*worker_tdigest);
+        }
+    }
+    g_worker_rtt_tdigests.resize(0);
+    g_overall_rtt_tdigest.compress();
+}
+
+/**
+ * @brief Thread function that periodically merges per-worker RTT TDigests into the global digest.
+ */
+void tdigest_merge_thread() {
+    while (!g_shutdown.load()) {
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+
+        // Merge per-worker RTT TDigests into global
+        merge_tdigest();
+    }
+}
+
+/**
+ * @brief Helper function to post RTT sample to per-worker TDigest and handle digest rotation.
+ * 
+ * @param[in,out] current_digest The current per-worker TDigest.
+ * @param[in] rtt_ns The RTT sample in nanoseconds.
+ */
+void post_rtt(std::unique_ptr<TDigest>& current_digest, uint64_t rotate_threshold, uint64_t rtt_ns) {
+    if (!current_digest) {
+        current_digest = std::make_unique<TDigest>(100.0);
+    }
+    current_digest->add(static_cast<double>(rtt_ns) / 1'000'000.0); // convert to ms
+
+    if (current_digest->total_weight() >= static_cast<double>(rotate_threshold)) {
+        // Post to global for merging
+        {
+            std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
+            g_worker_rtt_tdigests.push_back(std::move(current_digest));
+        }
+        current_digest = nullptr;
     }
 }
 
@@ -255,6 +310,8 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
                     ctx->total_rtt_ns.fetch_add(rtt);
                     update_min(ctx->min_rtt_ns, rtt);
                     update_max(ctx->max_rtt_ns, rtt);
+                    // Rotate approximately once a second based on rate.
+                    post_rtt(ctx->curren_rtt_tdigest, ctx->per_worker_rate, rtt);
                     ctx->outstanding_sequences.erase(header->sequence_number);
                 }
 
@@ -263,7 +320,13 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
                 // Find the unique_socket corresponding to this SOCKET
                 auto it = std::find_if(ctx->sockets.begin(), ctx->sockets.end(),
                                        [s](const unique_socket& us) { return us.get() == s; });
-                post_recv(*it, io_ctx);
+                if (it != ctx->sockets.end()) {
+                    post_recv(*it, io_ctx);
+                } else if (!ctx->sockets.empty()) {
+                    throw std::runtime_error(std::format(
+                        "Worker {}: Received completion for unknown socket {}", ctx->processor_id,
+                        s));
+                }
             } else {
                 // Send completed
                 available_send_contexts.push_back(io_ctx);
@@ -273,6 +336,13 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
 
     // Count remaining outstanding as dropped (add to any already tracked as dropped)
     ctx->packets_dropped.fetch_add(ctx->outstanding_sequences.size());
+
+    // Post to global for merging
+    {
+        std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
+        g_worker_rtt_tdigests.push_back(std::move(ctx->curren_rtt_tdigest));
+    }
+    ctx->curren_rtt_tdigest = nullptr;
 
     if (g_verbose.load())
         std::osyncstream(std::cout) << std::format(
@@ -464,6 +534,9 @@ int main(int argc, char* argv[]) try {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
+    // Start TDigest merge thread
+    std::thread tdigest_thread(tdigest_merge_thread);
+
     // Create worker contexts
     std::vector<std::unique_ptr<client_worker_context>> workers;
 
@@ -596,6 +669,10 @@ int main(int argc, char* argv[]) try {
         ctx->sockets.clear();
     }
 
+    tdigest_thread.join();
+
+    merge_tdigest();
+
     // Calculate and print final stats
     uint64_t total_sent = 0, total_recv = 0, total_dropped = 0;
     uint64_t total_bytes_sent = 0, total_bytes_recv = 0;
@@ -616,10 +693,11 @@ int main(int argc, char* argv[]) try {
         if (worker_max > max_rtt) max_rtt = worker_max;
     }
 
-    double avg_rtt_us =
-        total_recv > 0 ? (static_cast<double>(total_rtt) / total_recv / 1000.0) : 0.0;
-    double min_rtt_us = min_rtt != UINT64_MAX ? static_cast<double>(min_rtt) / 1000.0 : 0.0;
-    double max_rtt_us = static_cast<double>(max_rtt) / 1000.0;
+    // Convert RTT aggregates from nanoseconds into milliseconds for display
+    double avg_rtt_ms =
+        total_recv > 0 ? (static_cast<double>(total_rtt) / total_recv / 1'000'000.0) : 0.0;
+    double min_rtt_ms = min_rtt != UINT64_MAX ? static_cast<double>(min_rtt) / 1'000'000.0 : 0.0;
+    double max_rtt_ms = static_cast<double>(max_rtt) / 1'000'000.0;
 
     auto actual_duration = std::chrono::steady_clock::now() - start_time;
     double duration_s =
@@ -637,8 +715,15 @@ int main(int argc, char* argv[]) try {
                              total_sent > 0 ? (100.0 * total_dropped / total_sent) : 0.0);
     std::cout << std::format("Bytes sent: {} ({:.2f} Mbps)\n", total_bytes_sent, mbps_sent);
     std::cout << std::format("Bytes received: {} ({:.2f} Mbps)\n", total_bytes_recv, mbps_recv);
-    std::cout << std::format("RTT (min/avg/max): {:.2f}/{:.2f}/{:.2f} us\n", min_rtt_us, avg_rtt_us,
-                             max_rtt_us);
+    std::cout << std::format("RTT (min/avg/max): {:.2f}/{:.2f}/{:.2f} ms\n", min_rtt_ms,
+                             avg_rtt_ms, max_rtt_ms);
+
+    // TDigest stores RTT samples in milliseconds, so percentiles are in ms as well.
+    std::cout << std::format("RTT Percentiles (ms): p50={:.2f} p90={:.2f} p99={:.2f} p99.9={:.2f}\n",
+                                g_overall_rtt_tdigest.percentile(0.50),
+                                g_overall_rtt_tdigest.percentile(0.90),
+                                g_overall_rtt_tdigest.percentile(0.99),
+                                g_overall_rtt_tdigest.percentile(0.999));
 
     cleanup_winsock();
     return 0;
