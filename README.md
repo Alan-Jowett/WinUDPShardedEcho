@@ -46,6 +46,7 @@ Arguments:
 - `--cores, -c <num_cores>`: (Optional) Number of CPU cores to use (default: all available)
 - `--recvbuf, -b <bytes>`: (Optional) Socket receive buffer size in bytes (default: 4194304)
 - `--help, -h`: Show help/usage
+- `--stats-file, -o <path>`: (Client only) Write final run statistics as JSON to the given file path.
 
 Example:
 ```bash
