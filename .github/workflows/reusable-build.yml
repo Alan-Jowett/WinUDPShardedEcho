@@ -22,6 +22,10 @@ on:
         required: false
         type: string
         default: alan-jowett/WinUDPShardedEcho
+      ref:
+        required: false
+        type: string
+        default: main
       
 
 jobs:
@@ -34,6 +38,7 @@ jobs:
         with:
           repository: ${{ inputs.repository }}
           fetch-depth: 0
+          ref: ${{ inputs.ref }}
 
       - name: Configure CMake
         run: cmake -B ${{ inputs.build_dir }} -S . -DCMAKE_BUILD_TYPE=${{ inputs.config }}
