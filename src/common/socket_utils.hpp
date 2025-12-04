@@ -92,6 +92,8 @@ using unique_socket = wil::unique_socket;
 
 using unique_iocp = wil::unique_handle;
 
+using unique_event = wil::unique_handle;
+
 // RAII wrapper for RIO completion queue
 class unique_rio_cq {
     RIO_CQ cq_;
@@ -429,10 +431,11 @@ RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock);
  *
  * @param rio RIO function table.
  * @param queue_size Size of the completion queue.
+ * @param notification_event Event handle for notification (can be nullptr).
  * @return unique_rio_cq RAII wrapper.
  * @throws socket_exception on failure.
  */
-unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size);
+unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size, unique_event& notification_event);
 
 /**
  * @brief Create a RIO request queue for a socket.

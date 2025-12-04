@@ -89,6 +89,8 @@ struct server_rio_worker_context {
     uint32_t processor_id;
     /// The UDP socket owned by the worker.
     unique_socket socket;
+    /// Notification event for RIO completion queue.
+    unique_event notification_event;
     /// RIO function table.
     RIO_EXTENSION_FUNCTION_TABLE rio;
     /// RIO completion queue (RAII wrapper).
@@ -322,10 +324,6 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
     // Completion results array
     RIORESULT results[RIO_MAX_RESULTS];
 
-    // Spin counter for adaptive backoff
-    int empty_polls = 0;
-    constexpr int MAX_EMPTY_POLLS_BEFORE_YIELD = 1000;
-
     while (!g_shutdown.load()) {
         // Continuously dequeue all available completions in a tight loop
         ULONG num_results =
@@ -336,17 +334,9 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
         }
 
         if (num_results == 0) {
-            // No completions available - use adaptive backoff
-            ++empty_polls;
-            if (empty_polls >= MAX_EMPTY_POLLS_BEFORE_YIELD) {
-                std::this_thread::yield();
-                empty_polls = 0;
-            }
+            WaitForSingleObject(ctx->notification_event.get(), 10);
             continue;
         }
-
-        // Reset backoff counter when we get work
-        empty_polls = 0;
 
         // Process all completions in this batch
         do {
@@ -629,6 +619,13 @@ int main(int argc, char* argv[]) try {
             -> std::unique_ptr<server_rio_worker_context> {
             auto ctx = std::make_unique<server_rio_worker_context>();
             ctx->processor_id = cpu_id;
+            HANDLE event_handle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
+            if (!event_handle || event_handle == INVALID_HANDLE_VALUE) {
+                throw socket_exception(std::format("CreateEventW failed: {}",
+                                                    get_last_error_message()));
+            }
+
+            ctx->notification_event.reset(event_handle);
 
             ctx->socket = create_udp_socket(address_family, true);  // true = use RIO
 
@@ -647,7 +644,7 @@ int main(int argc, char* argv[]) try {
             bind_socket(ctx->socket, static_cast<uint16_t>(port), address_family);
 
             // Create RIO completion queue in polling mode (IOCP doesn't work with UDP)
-            ctx->completion_queue = create_rio_completion_queue(ctx->rio, RIO_CQ_SIZE);
+            ctx->completion_queue = create_rio_completion_queue(ctx->rio, RIO_CQ_SIZE, ctx->notification_event);
             if (!ctx->completion_queue) {
                 throw socket_exception(std::format("RIOCreateCompletionQueue failed (CPU {}): {}",
                                                     cpu_id, get_last_error_message()));
