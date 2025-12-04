@@ -21,6 +21,31 @@
 #define SIO_CPU_AFFINITY _WSAIOW(IOC_VENDOR, 21)
 #endif
 
+// Implement RAII wrapper methods
+unique_rio_cq::~unique_rio_cq() noexcept {
+    reset();
+}
+
+void unique_rio_cq::reset() noexcept {
+    if (cq_ != RIO_INVALID_CQ && rio_) {
+        rio_->RIOCloseCompletionQueue(cq_);
+        cq_ = RIO_INVALID_CQ;
+        rio_ = nullptr;
+    }
+}
+
+unique_rio_buffer::~unique_rio_buffer() noexcept {
+    reset();
+}
+
+void unique_rio_buffer::reset() noexcept {
+    if (buffer_id_ != RIO_INVALID_BUFFERID && rio_) {
+        rio_->RIODeregisterBuffer(buffer_id_);
+        buffer_id_ = RIO_INVALID_BUFFERID;
+        rio_ = nullptr;
+    }
+}
+
 /**
  * @brief Initialize the Winsock library (WSAStartup).
  *
@@ -448,7 +473,7 @@ RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock) 
  * @throws socket_exception on failure.
  * @return RIO_CQ handle for the completion queue.
  */
-RIO_CQ create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size) {
+unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size) {
     // Create a completion queue using polling mode (IOCP notification doesn't work with UDP)
     RIO_CQ cq = rio.RIOCreateCompletionQueue(queue_size, nullptr);
     if (cq == RIO_INVALID_CQ) {
@@ -456,7 +481,7 @@ RIO_CQ create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWOR
             std::format("RIOCreateCompletionQueue failed: {}", get_last_error_message()));
     }
 
-    return cq;
+    return unique_rio_cq(cq, &rio);
 }
 
 /**
@@ -470,19 +495,19 @@ RIO_CQ create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWOR
  * @throws socket_exception on failure.
  * @return RIO_RQ handle for the request queue.
  */
-RIO_RQ create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, const unique_socket& sock,
-                                RIO_CQ completion_queue, DWORD max_outstanding_recv,
+unique_rio_rq create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, const unique_socket& sock,
+                                const unique_rio_cq& completion_queue, DWORD max_outstanding_recv,
                                 DWORD max_outstanding_send) {
     RIO_RQ rq = rio.RIOCreateRequestQueue(sock.get(), max_outstanding_recv, 1,
-                                          max_outstanding_send, 1, completion_queue,
-                                          completion_queue, nullptr);
+                                          max_outstanding_send, 1, completion_queue.get(),
+                                          completion_queue.get(), nullptr);
 
     if (rq == RIO_INVALID_RQ) {
         throw socket_exception(
             std::format("RIOCreateRequestQueue failed: {}", get_last_error_message()));
     }
 
-    return rq;
+    return unique_rio_rq(rq);
 }
 
 /**
@@ -494,7 +519,7 @@ RIO_RQ create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, const u
  * @throws socket_exception on failure.
  * @return RIO_BUFFERID for the registered buffer.
  */
-RIO_BUFFERID register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* buffer, DWORD size) {
+unique_rio_buffer register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* buffer, DWORD size) {
     RIO_BUFFERID buffer_id = rio.RIORegisterBuffer(reinterpret_cast<PCHAR>(buffer), size);
 
     if (buffer_id == RIO_INVALID_BUFFERID) {
@@ -502,7 +527,7 @@ RIO_BUFFERID register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* 
             std::format("RIORegisterBuffer failed: {}", get_last_error_message()));
     }
 
-    return buffer_id;
+    return unique_rio_buffer(buffer_id, &rio);
 }
 
 /**
@@ -517,12 +542,12 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
     ctx->remote_addr_len = sizeof(ctx->remote_addr);
 
     RIO_BUF data_buf = {};
-    data_buf.BufferId = ctx->buffer_id;
+    data_buf.BufferId = ctx->buffer_id.get();
     data_buf.Offset = 0;
     data_buf.Length = static_cast<ULONG>(ctx->buffer.size());
 
     RIO_BUF addr_buf = {};
-    addr_buf.BufferId = ctx->addr_buffer_id;
+    addr_buf.BufferId = ctx->addr_buffer_id.get();
     addr_buf.Offset = 0;
     addr_buf.Length = sizeof(ctx->remote_addr);
 
@@ -540,16 +565,16 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
  * @param ctx RIO context with data to send.
  * @param len Length of data to send.
  */
-void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx, size_t len) {
+void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx, DWORD length) {
     ctx->operation = io_operation_type::send;
 
     RIO_BUF data_buf = {};
-    data_buf.BufferId = ctx->buffer_id;
+    data_buf.BufferId = ctx->buffer_id.get();
     data_buf.Offset = 0;
-    data_buf.Length = static_cast<ULONG>(len);
+    data_buf.Length = length;
 
     RIO_BUF addr_buf = {};
-    addr_buf.BufferId = ctx->addr_buffer_id;
+    addr_buf.BufferId = ctx->addr_buffer_id.get();
     addr_buf.Offset = 0;
     addr_buf.Length = ctx->remote_addr_len;
 

@@ -91,10 +91,10 @@ struct server_rio_worker_context {
     unique_socket socket;
     /// RIO function table.
     RIO_EXTENSION_FUNCTION_TABLE rio;
-    /// RIO completion queue.
-    RIO_CQ completion_queue;
-    /// RIO request queue.
-    RIO_RQ request_queue;
+    /// RIO completion queue (RAII wrapper).
+    unique_rio_cq completion_queue;
+    /// RIO request queue (RAII wrapper).
+    unique_rio_rq request_queue;
     /// Worker thread (jthread for cooperative cancellation support).
     std::jthread worker_thread;
     /// Counters and statistics.
@@ -311,7 +311,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
 
     // Post initial receive operations
     for (auto& recv_ctx : recv_contexts) {
-        post_rio_recv(ctx->rio, ctx->request_queue, recv_ctx.get());
+        post_rio_recv(ctx->rio, ctx->request_queue.get(), recv_ctx.get());
     }
 
     if (g_verbose.load())
@@ -329,13 +329,10 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
     while (!g_shutdown.load()) {
         // Continuously dequeue all available completions in a tight loop
         ULONG num_results =
-            ctx->rio.RIODequeueCompletion(ctx->completion_queue, results, RIO_MAX_RESULTS);
+            ctx->rio.RIODequeueCompletion(ctx->completion_queue.get(), results, RIO_MAX_RESULTS);
 
         if (num_results == RIO_CORRUPT_CQ) {
-            std::osyncstream(std::cerr)
-                << std::format("[CPU {}] RIO completion queue corrupted\n", ctx->processor_id);
-            g_shutdown.store(true);
-            goto cleanup;
+            throw std::runtime_error(std::format("[CPU {}] RIO completion queue corrupted\n", ctx->processor_id));
         }
 
         if (num_results == 0) {
@@ -379,7 +376,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
                                     "[CPU {}] sync send failed: {}\n", ctx->processor_id, ex.what());
                             }
                             // Re-post receive and continue
-                            post_rio_recv(ctx->rio, ctx->request_queue, rio_ctx);
+                            post_rio_recv(ctx->rio, ctx->request_queue.get(), rio_ctx);
                             continue;
                         }
 
@@ -392,7 +389,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
                             std::osyncstream(std::cerr) << std::format(
                                 "[CPU {}] No available RIO send context\n", ctx->processor_id);
                             // Re-post receive and continue
-                            post_rio_recv(ctx->rio, ctx->request_queue, rio_ctx);
+                            post_rio_recv(ctx->rio, ctx->request_queue.get(), rio_ctx);
                             continue;
                         }
 
@@ -402,13 +399,13 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
                                     sizeof(rio_ctx->remote_addr));
                         send_ctx->remote_addr_len = rio_ctx->remote_addr_len;
 
-                        post_rio_send(ctx->rio, ctx->request_queue, send_ctx, bytes_transferred);
+                        post_rio_send(ctx->rio, ctx->request_queue.get(), send_ctx, bytes_transferred);
                         ctx->packets_sent.fetch_add(1);
                         ctx->bytes_sent.fetch_add(bytes_transferred);
                     }
 
                     // Re-post receive for continuous processing
-                    post_rio_recv(ctx->rio, ctx->request_queue, rio_ctx);
+                    post_rio_recv(ctx->rio, ctx->request_queue.get(), rio_ctx);
                 } else {
                     // Send completed — return context to pool
                     available_send_contexts.push_back(rio_ctx);
@@ -417,25 +414,12 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
 
             // Try to dequeue more completions immediately
             num_results =
-                ctx->rio.RIODequeueCompletion(ctx->completion_queue, results, RIO_MAX_RESULTS);
+                ctx->rio.RIODequeueCompletion(ctx->completion_queue.get(), results, RIO_MAX_RESULTS);
         } while (num_results > 0);
     }
 
-cleanup:
-
-    // Deregister buffers
-    for (auto& recv_ctx : recv_contexts) {
-        ctx->rio.RIODeregisterBuffer(recv_ctx->buffer_id);
-        ctx->rio.RIODeregisterBuffer(recv_ctx->addr_buffer_id);
-    }
-    for (auto& send_ctx : send_contexts) {
-        ctx->rio.RIODeregisterBuffer(send_ctx->buffer_id);
-        ctx->rio.RIODeregisterBuffer(send_ctx->addr_buffer_id);
-    }
-
-    // Close RIO resources
-    ctx->rio.RIOCloseCompletionQueue(ctx->completion_queue);
-
+    // RAII wrappers automatically clean up buffers and queues
+    
     if (g_verbose.load())
         std::osyncstream(std::cout) << std::format(
             "[CPU {}] RIO Worker shutting down. Stats: recv={}, sent={}, "
@@ -590,7 +574,7 @@ int main(int argc, char* argv[]) try {
 
             // Create RIO completion queue in polling mode (IOCP doesn't work with UDP)
             ctx->completion_queue = create_rio_completion_queue(ctx->rio, RIO_CQ_SIZE);
-            if (ctx->completion_queue == RIO_INVALID_CQ) {
+            if (!ctx->completion_queue) {
                 throw socket_exception(std::format("RIOCreateCompletionQueue failed (CPU {}): {}",
                                                     cpu_id, get_last_error_message()));
             }
