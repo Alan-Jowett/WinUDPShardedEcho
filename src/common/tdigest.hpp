@@ -2,7 +2,7 @@
  * tdigest.hpp
  *
  * Lightweight t-digest implementation for partitioned, mergeable percentile
- * estimation. 
+ * estimation.
  *
  * @file tdigest.hpp
  * @brief Mergeable, lock-free t-digest style estimator.
@@ -13,9 +13,9 @@
  */
 #pragma once
 
+#include <cmath>
 #include <cstddef>
 #include <vector>
-#include <cmath>
 
 /**
  * @class TDigest
@@ -28,7 +28,7 @@
  * is called.
  */
 class TDigest {
-public:
+   public:
     /**
      * @brief Construct a TDigest.
      * @param compression Tuning parameter (higher => more accuracy).
@@ -67,17 +67,19 @@ public:
      */
     void reset();
 
-private:
-    struct Centroid { double mean; double weight; };
+   private:
+    struct Centroid {
+        double mean;
+        double weight;
+    };
 
     double compression_;
-    std::vector<double> buffer_; ///< Raw points waiting for compression
-    std::vector<Centroid> centroids_; ///< Compressed centroids
-    double total_weight_ = 0.0; ///< Sum of weights
+    std::vector<double> buffer_;       ///< Raw points waiting for compression
+    std::vector<Centroid> centroids_;  ///< Compressed centroids
+    double total_weight_ = 0.0;        ///< Sum of weights
 
     /**
      * @brief Build centroids from a sorted list of (value, weight) pairs.
      */
-    void build_from(const std::vector<std::pair<double,double>>& merged);
+    void build_from(const std::vector<std::pair<double, double>>& merged);
 };
-

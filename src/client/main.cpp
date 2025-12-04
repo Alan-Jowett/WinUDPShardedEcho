@@ -6,7 +6,7 @@
  * sockets and threads to a specific logical processor, posts asynchronous
  * receives, and sends UDP packets containing a sequence number and timestamp.
  * Received echoes are used to compute RTT and detect lost packets.
- * 
+ *
  * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
  * SPDX-License-Identifier: MIT
  */
@@ -23,16 +23,15 @@
 #include <csignal>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iomanip>
 #include <mutex>
 #include <syncstream>
 #include <unordered_set>
-#include <fstream>
-#include <iomanip>
 
 #include "common/arg_parser.hpp"
 #include "common/socket_utils.hpp"
 #include "common/tdigest.hpp"
-
 
 // Global flag for shutdown; set to true to request orderly termination.
 std::atomic<bool> g_shutdown{false};
@@ -93,13 +92,14 @@ struct client_worker_context {
 };
 
 std::mutex g_worker_contexts_mutex;
-std::vector<std::unique_ptr<TDigest>> g_worker_rtt_tdigests; ///< Digest posted by each worker for merging.
+std::vector<std::unique_ptr<TDigest>>
+    g_worker_rtt_tdigests;  ///< Digest posted by each worker for merging.
 
 // Packet rate limit total across all workers (packets per second, 0 = unlimited)
 // Each worker will be assigned an equal share (plus remainder distribution).
 uint64_t g_rate_limit = 10000;  // default total
 
-TDigest g_overall_rtt_tdigest(100.0); ///< Global RTT TDigest for percentile estimation
+TDigest g_overall_rtt_tdigest(100.0);  ///< Global RTT TDigest for percentile estimation
 
 /**
  * @brief Atomically update a target to the minimum of its current value and `value`.
@@ -148,15 +148,16 @@ void tdigest_merge_thread() {
 
 /**
  * @brief Helper function to post RTT sample to per-worker TDigest and handle digest rotation.
- * 
+ *
  * @param[in,out] current_digest The current per-worker TDigest.
  * @param[in] rtt_ns The RTT sample in nanoseconds.
  */
-void post_rtt(std::unique_ptr<TDigest>& current_digest, uint64_t rotate_threshold, uint64_t rtt_ns) {
+void post_rtt(std::unique_ptr<TDigest>& current_digest, uint64_t rotate_threshold,
+              uint64_t rtt_ns) {
     if (!current_digest) {
         current_digest = std::make_unique<TDigest>(100.0);
     }
-    current_digest->add(static_cast<double>(rtt_ns) / 1'000'000.0); // convert to ms
+    current_digest->add(static_cast<double>(rtt_ns) / 1'000'000.0);  // convert to ms
 
     if (current_digest->total_weight() >= static_cast<double>(rotate_threshold)) {
         // Post to global for merging
@@ -325,9 +326,9 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
                 if (it != ctx->sockets.end()) {
                     post_recv(*it, io_ctx);
                 } else if (!ctx->sockets.empty()) {
-                    throw std::runtime_error(std::format(
-                        "Worker {}: Received completion for unknown socket {}", ctx->processor_id,
-                        s));
+                    throw std::runtime_error(
+                        std::format("Worker {}: Received completion for unknown socket {}",
+                                    ctx->processor_id, s));
                 }
             } else {
                 // Send completed
@@ -381,8 +382,8 @@ void print_usage(const char* program_name) {
         << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
            "4194304 = 4MB)\n"
         << "  --sockets, -k <n>         - Number of sockets to create per worker (default: 1)\n"
-          << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
-          << "  --stats-file, -o <path>   - Write final run statistics as JSON to file\n"
+        << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
+        << "  --stats-file, -o <path>   - Write final run statistics as JSON to file\n"
         << "  --help, -h                - Show this help\n";
 }
 
@@ -398,7 +399,7 @@ int main(int argc, char* argv[]) try {
     ArgParser parser;
     parser.add_option("verbose", 'v', "0", false);
     parser.add_option("server", 's', "", true);
-    parser.add_option("port", 'p', "7", true); // Note: The IANA-assigned port for echo is 7
+    parser.add_option("port", 'p', "7", true);  // Note: The IANA-assigned port for echo is 7
     parser.add_option("payload", 'l', "64", true);
     parser.add_option("cores", 'c', "0", true);
     parser.add_option("duration", 'd', "10", true);
@@ -720,15 +721,14 @@ int main(int argc, char* argv[]) try {
                              total_sent > 0 ? (100.0 * total_dropped / total_sent) : 0.0);
     std::cout << std::format("Bytes sent: {} ({:.2f} Mbps)\n", total_bytes_sent, mbps_sent);
     std::cout << std::format("Bytes received: {} ({:.2f} Mbps)\n", total_bytes_recv, mbps_recv);
-    std::cout << std::format("RTT (min/avg/max): {:.2f}/{:.2f}/{:.2f} ms\n", min_rtt_ms,
-                             avg_rtt_ms, max_rtt_ms);
+    std::cout << std::format("RTT (min/avg/max): {:.2f}/{:.2f}/{:.2f} ms\n", min_rtt_ms, avg_rtt_ms,
+                             max_rtt_ms);
 
     // TDigest stores RTT samples in milliseconds, so percentiles are in ms as well.
-    std::cout << std::format("RTT Percentiles (ms): p50={:.2f} p90={:.2f} p99={:.2f} p99.9={:.2f}\n",
-                                g_overall_rtt_tdigest.percentile(0.50),
-                                g_overall_rtt_tdigest.percentile(0.90),
-                                g_overall_rtt_tdigest.percentile(0.99),
-                                g_overall_rtt_tdigest.percentile(0.999));
+    std::cout << std::format(
+        "RTT Percentiles (ms): p50={:.2f} p90={:.2f} p99={:.2f} p99.9={:.2f}\n",
+        g_overall_rtt_tdigest.percentile(0.50), g_overall_rtt_tdigest.percentile(0.90),
+        g_overall_rtt_tdigest.percentile(0.99), g_overall_rtt_tdigest.percentile(0.999));
 
     // Optionally write final statistics to a file as JSON if requested
     if (!stats_file.empty()) {
@@ -754,10 +754,14 @@ int main(int argc, char* argv[]) try {
             ofs << std::format("  \"rtt_min_ms\": {:.2f},\n", min_rtt_ms);
             ofs << std::format("  \"rtt_avg_ms\": {:.2f},\n", avg_rtt_ms);
             ofs << std::format("  \"rtt_max_ms\": {:.2f},\n", max_rtt_ms);
-            ofs << std::format("  \"rtt_p50_ms\": {:.2f},\n", g_overall_rtt_tdigest.percentile(0.50));
-            ofs << std::format("  \"rtt_p90_ms\": {:.2f},\n", g_overall_rtt_tdigest.percentile(0.90));
-            ofs << std::format("  \"rtt_p99_ms\": {:.2f},\n", g_overall_rtt_tdigest.percentile(0.99));
-            ofs << std::format("  \"rtt_p999_ms\": {:.2f}\n", g_overall_rtt_tdigest.percentile(0.999));
+            ofs << std::format("  \"rtt_p50_ms\": {:.2f},\n",
+                               g_overall_rtt_tdigest.percentile(0.50));
+            ofs << std::format("  \"rtt_p90_ms\": {:.2f},\n",
+                               g_overall_rtt_tdigest.percentile(0.90));
+            ofs << std::format("  \"rtt_p99_ms\": {:.2f},\n",
+                               g_overall_rtt_tdigest.percentile(0.99));
+            ofs << std::format("  \"rtt_p999_ms\": {:.2f}\n",
+                               g_overall_rtt_tdigest.percentile(0.999));
             ofs << "}\n";
             ofs.close();
             if (g_verbose.load()) std::cout << std::format("Wrote JSON stats to {}\n", stats_file);

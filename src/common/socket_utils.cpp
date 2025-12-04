@@ -7,7 +7,7 @@
  * operations and working with IO Completion Ports (IOCP). It provides a thin
  * platform-specific layer used by the scalable echo server and client
  * examples.
- * 
+ *
  * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
  * SPDX-License-Identifier: MIT
  */
@@ -155,9 +155,9 @@ void associate_socket_with_iocp(const unique_socket& sock, unique_iocp& iocp,
  * @brief Wrapper around SetFileCompletionNotificationModes that throws on failure.
  */
 void set_file_completion_notification_modes(HANDLE handle, UCHAR flags) {
-    
     if (!SetFileCompletionNotificationModes(handle, flags)) {
-        throw socket_exception(std::format("SetFileCompletionNotificationModes failed: {}", get_last_error_message()));
+        throw socket_exception(
+            std::format("SetFileCompletionNotificationModes failed: {}", get_last_error_message()));
     }
 }
 
@@ -214,7 +214,9 @@ void set_thread_affinity(uint32_t processor_id) {
     }
 
     if (!found) {
-        throw socket_exception(std::format("Processor ID {} is out of range ({} logical processors)", processor_id, processor_id + 1u));
+        throw socket_exception(
+            std::format("Processor ID {} is out of range ({} logical processors)", processor_id,
+                        processor_id + 1u));
     }
 
     GROUP_AFFINITY affinity = {};
@@ -222,8 +224,8 @@ void set_thread_affinity(uint32_t processor_id) {
     affinity.Mask = static_cast<KAFFINITY>(1ULL) << target_index;
 
     if (!SetThreadGroupAffinity(GetCurrentThread(), &affinity, nullptr)) {
-        throw socket_exception(std::format(
-            "SetThreadGroupAffinity failed for processor {}: {}", processor_id, get_last_error_message()));
+        throw socket_exception(std::format("SetThreadGroupAffinity failed for processor {}: {}",
+                                           processor_id, get_last_error_message()));
     }
 }
 
@@ -361,16 +363,16 @@ void post_send(const unique_socket& sock, io_context* ctx, const char* data, siz
     }
 }
 
-    int send_sync(const unique_socket& sock, const char* data, size_t len, const sockaddr* dest_addr,
-                  int dest_addr_len) {
-        // For UDP, sendto either sends the full datagram or fails.
-        int to_send = static_cast<int>(std::min<size_t>(len, INT_MAX));
-        int sent = sendto(sock.get(), data, to_send, 0, dest_addr, dest_addr_len);
-        if (sent == SOCKET_ERROR) {
-            throw socket_exception(std::format("sendto failed: {}", get_last_error_message()));
-        }
-        return sent;
+int send_sync(const unique_socket& sock, const char* data, size_t len, const sockaddr* dest_addr,
+              int dest_addr_len) {
+    // For UDP, sendto either sends the full datagram or fails.
+    int to_send = static_cast<int>(std::min<size_t>(len, INT_MAX));
+    int sent = sendto(sock.get(), data, to_send, 0, dest_addr, dest_addr_len);
+    if (sent == SOCKET_ERROR) {
+        throw socket_exception(std::format("sendto failed: {}", get_last_error_message()));
     }
+    return sent;
+}
 
 /**
  * @brief Retrieve the local socket name (getsockname) for `sock`.
@@ -476,7 +478,8 @@ RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock) 
  * @throws socket_exception on failure.
  * @return RIO_CQ handle for the completion queue.
  */
-unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size, unique_event& notification_event) {
+unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size,
+                                          unique_event& notification_event) {
     // Create a completion queue.
     RIO_NOTIFICATION_COMPLETION notification = {};
     notification.Type = RIO_EVENT_COMPLETION;
@@ -502,12 +505,13 @@ unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& ri
  * @throws socket_exception on failure.
  * @return RIO_RQ handle for the request queue.
  */
-unique_rio_rq create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, const unique_socket& sock,
-                                const unique_rio_cq& completion_queue, DWORD max_outstanding_recv,
-                                DWORD max_outstanding_send) {
-    RIO_RQ rq = rio.RIOCreateRequestQueue(sock.get(), max_outstanding_recv, 1,
-                                          max_outstanding_send, 1, completion_queue.get(),
-                                          completion_queue.get(), nullptr);
+unique_rio_rq create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio,
+                                       const unique_socket& sock,
+                                       const unique_rio_cq& completion_queue,
+                                       DWORD max_outstanding_recv, DWORD max_outstanding_send) {
+    RIO_RQ rq =
+        rio.RIOCreateRequestQueue(sock.get(), max_outstanding_recv, 1, max_outstanding_send, 1,
+                                  completion_queue.get(), completion_queue.get(), nullptr);
 
     if (rq == RIO_INVALID_RQ) {
         throw socket_exception(
@@ -526,7 +530,8 @@ unique_rio_rq create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, 
  * @throws socket_exception on failure.
  * @return RIO_BUFFERID for the registered buffer.
  */
-unique_rio_buffer register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* buffer, DWORD size) {
+unique_rio_buffer register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* buffer,
+                                      DWORD size) {
     RIO_BUFFERID buffer_id = rio.RIORegisterBuffer(reinterpret_cast<PCHAR>(buffer), size);
 
     if (buffer_id == RIO_INVALID_BUFFERID) {
@@ -559,8 +564,7 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
     addr_buf.Length = sizeof(ctx->remote_addr);
 
     if (!rio.RIOReceiveEx(rq, &data_buf, 1, nullptr, &addr_buf, nullptr, nullptr, 0, ctx)) {
-        throw socket_exception(
-            std::format("RIOReceiveEx failed: {}", get_last_error_message()));
+        throw socket_exception(std::format("RIOReceiveEx failed: {}", get_last_error_message()));
     }
 }
 
@@ -572,7 +576,8 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
  * @param ctx RIO context with data to send.
  * @param len Length of data to send.
  */
-void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx, DWORD length) {
+void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx,
+                   DWORD length) {
     ctx->operation = io_operation_type::send;
 
     RIO_BUF data_buf = {};
@@ -586,8 +591,7 @@ void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
     addr_buf.Length = ctx->remote_addr_len;
 
     if (!rio.RIOSendEx(rq, &data_buf, 1, nullptr, &addr_buf, nullptr, nullptr, 0, ctx)) {
-        throw socket_exception(
-            std::format("RIOSendEx failed: {}", get_last_error_message()));
+        throw socket_exception(std::format("RIOSendEx failed: {}", get_last_error_message()));
     }
 }
 
@@ -604,7 +608,8 @@ void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
  * @param contexts Vector of RIO contexts to post receives for.
  * @throws socket_exception if any operation fails.
  */
-void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, const std::vector<rio_context*>& contexts) {
+void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq,
+                   const std::vector<rio_context*>& contexts) {
     for (auto* ctx : contexts) {
         ctx->operation = io_operation_type::recv;
         ctx->remote_addr_len = sizeof(ctx->remote_addr);
@@ -619,10 +624,17 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, const std
         addr_buf.Offset = 0;
         addr_buf.Length = sizeof(ctx->remote_addr);
 
-        if (!rio.RIOReceiveEx(rq, &data_buf, 1, nullptr, &addr_buf, nullptr, nullptr, 0, ctx)) {
+        if (!rio.RIOReceiveEx(rq, &data_buf, 1, nullptr, &addr_buf, nullptr, nullptr, RIO_MSG_DEFER,
+                              ctx)) {
             throw socket_exception(
                 std::format("RIOReceiveEx failed: {}", get_last_error_message()));
         }
+    }
+
+    // Commit all deferred receives at once
+    if (!rio.RIOReceiveEx(rq, nullptr, 0, nullptr, nullptr, nullptr, nullptr, RIO_MSG_COMMIT_ONLY,
+                          nullptr)) {
+        throw socket_exception(std::format("RIONotify failed: {}", get_last_error_message()));
     }
 }
 
@@ -639,7 +651,7 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, const std
  * @param send_data Vector of pairs containing rio_context pointer and data length.
  * @throws socket_exception if any operation fails.
  */
-void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, 
+void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq,
                    const std::vector<std::pair<rio_context*, DWORD>>& send_data) {
     for (const auto& [ctx, length] : send_data) {
         ctx->operation = io_operation_type::send;
@@ -654,9 +666,14 @@ void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq,
         addr_buf.Offset = 0;
         addr_buf.Length = ctx->remote_addr_len;
 
-        if (!rio.RIOSendEx(rq, &data_buf, 1, nullptr, &addr_buf, nullptr, nullptr, 0, ctx)) {
-            throw socket_exception(
-                std::format("RIOSendEx failed: {}", get_last_error_message()));
+        if (!rio.RIOSendEx(rq, &data_buf, 1, nullptr, &addr_buf, nullptr, nullptr, RIO_MSG_DEFER,
+                           ctx)) {
+            throw socket_exception(std::format("RIOSendEx failed: {}", get_last_error_message()));
         }
+    }
+    // Commit all deferred sends at once
+    if (!rio.RIOSendEx(rq, nullptr, 0, nullptr, nullptr, nullptr, nullptr, RIO_MSG_COMMIT_ONLY,
+                       nullptr)) {
+        throw socket_exception(std::format("RIONotify failed: {}", get_last_error_message()));
     }
 }

@@ -3,7 +3,7 @@
  * tdigest.cpp
  *
  * Implementation for `scalable_echo::TDigest`.
- * 
+ *
  * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
  * SPDX-License-Identifier: MIT
  */
@@ -13,7 +13,6 @@
 #include <algorithm>
 #include <limits>
 #include <stdexcept>
-
 
 /**
  * @brief Construct a TDigest with a given compression parameter.
@@ -40,29 +39,29 @@ void TDigest::compress() {
     if (buffer_.empty() && centroids_.empty()) return;
 
     // Merge buffer and existing centroids into sorted list of (value, weight)
-    std::vector<std::pair<double,double>> merged;
+    std::vector<std::pair<double, double>> merged;
     merged.reserve(buffer_.size() + centroids_.size());
 
     for (double v : buffer_) merged.emplace_back(v, 1.0);
-    for (const auto &c : centroids_) merged.emplace_back(c.mean, c.weight);
+    for (const auto& c : centroids_) merged.emplace_back(c.mean, c.weight);
 
     buffer_.clear();
 
-    std::sort(merged.begin(), merged.end(), [](auto &a, auto &b){ return a.first < b.first; });
+    std::sort(merged.begin(), merged.end(), [](auto& a, auto& b) { return a.first < b.first; });
     build_from(merged);
 }
 
 /**
  * @brief Build compressed centroids from a sorted list of (value,weight).
  */
-void TDigest::build_from(const std::vector<std::pair<double,double>>& merged) {
+void TDigest::build_from(const std::vector<std::pair<double, double>>& merged) {
     centroids_.clear();
     if (merged.empty()) return;
 
     double total = 0.0;
-    for (const auto &p : merged) total += p.second;
+    for (const auto& p : merged) total += p.second;
 
-    double k_limit = 4.0 * total / compression_; // heuristic scaling
+    double k_limit = 4.0 * total / compression_;  // heuristic scaling
     double cumulative = 0.0;
     double current_mean = merged[0].first;
     double current_weight = merged[0].second;
@@ -71,7 +70,7 @@ void TDigest::build_from(const std::vector<std::pair<double,double>>& merged) {
         double v = merged[i].first;
         double w = merged[i].second;
         double projected = cumulative + current_weight + w;
-        double q = projected / total; // quantile after adding
+        double q = projected / total;  // quantile after adding
         double k = compression_ * q;
 
         if (current_weight + w <= std::max(1.0, k_limit)) {
@@ -97,18 +96,18 @@ void TDigest::build_from(const std::vector<std::pair<double,double>>& merged) {
  */
 void TDigest::merge(const TDigest& other) {
     // Combine centroids and other's centroids + buffers into a merged vector
-    std::vector<std::pair<double,double>> merged;
+    std::vector<std::pair<double, double>> merged;
     merged.reserve(centroids_.size() + other.centroids_.size() + other.buffer_.size());
 
-    for (const auto &c : centroids_) merged.emplace_back(c.mean, c.weight);
+    for (const auto& c : centroids_) merged.emplace_back(c.mean, c.weight);
     for (double v : buffer_) merged.emplace_back(v, 1.0);
 
-    for (const auto &c : other.centroids_) merged.emplace_back(c.mean, c.weight);
+    for (const auto& c : other.centroids_) merged.emplace_back(c.mean, c.weight);
     for (double v : other.buffer_) merged.emplace_back(v, 1.0);
 
     total_weight_ += other.total_weight_;
 
-    std::sort(merged.begin(), merged.end(), [](auto &a, auto &b){ return a.first < b.first; });
+    std::sort(merged.begin(), merged.end(), [](auto& a, auto& b) { return a.first < b.first; });
     buffer_.clear();
     build_from(merged);
 }
@@ -121,11 +120,12 @@ double TDigest::percentile(double q) const {
     if (total_weight_ <= 0.0) return std::numeric_limits<double>::quiet_NaN();
 
     // If there are buffered points, we need to operate on a merged view.
-    std::vector<std::pair<double,double>> merged;
+    std::vector<std::pair<double, double>> merged;
     merged.reserve(centroids_.size() + buffer_.size());
-    for (const auto &c : centroids_) merged.emplace_back(c.mean, c.weight);
+    for (const auto& c : centroids_) merged.emplace_back(c.mean, c.weight);
     for (double v : buffer_) merged.emplace_back(v, 1.0);
-    if (!buffer_.empty()) std::sort(merged.begin(), merged.end(), [](auto &a, auto &b){ return a.first < b.first; });
+    if (!buffer_.empty())
+        std::sort(merged.begin(), merged.end(), [](auto& a, auto& b) { return a.first < b.first; });
 
     // Walk merged list to find desired cumulative weight
     double target = q * total_weight_;

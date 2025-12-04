@@ -6,7 +6,7 @@
  * posting overlapped operations and interacting with IO Completion Ports
  * (IOCP) on Windows. It also defines packet framing constants used by the
  * echo server/client.
- * 
+ *
  * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
  * SPDX-License-Identifier: MIT
  */
@@ -37,7 +37,6 @@
 #include <utility>
 #include <vector>
 
-
 // Packet header for tracking sequence numbers
 #pragma pack(push, 1)
 /**
@@ -63,9 +62,9 @@ constexpr size_t MAX_PAYLOAD_SIZE = MAX_PACKET_SIZE - HEADER_SIZE;
 
 // Shared configuration constants
 /// Number of simultaneous outstanding asynchronous I/O operations per socket.
-constexpr size_t OUTSTANDING_OPS = 16;            // Number of outstanding I/O operations per socket
+constexpr size_t OUTSTANDING_OPS = 16;  // Number of outstanding I/O operations per socket
 /// Timeout in milliseconds used when polling an IOCP for events.
-constexpr DWORD IOCP_TIMEOUT_MS = 10;             // IOCP polling timeout in milliseconds
+constexpr DWORD IOCP_TIMEOUT_MS = 10;  // IOCP polling timeout in milliseconds
 /// Timeout used specifically during shutdown checks on the IOCP.
 constexpr DWORD IOCP_SHUTDOWN_TIMEOUT_MS = 1000;  // IOCP timeout for shutdown check
 
@@ -98,24 +97,23 @@ using unique_event = wil::unique_handle;
 class unique_rio_cq {
     RIO_CQ cq_;
     const RIO_EXTENSION_FUNCTION_TABLE* rio_;
-    
-public:
+
+   public:
     unique_rio_cq() noexcept : cq_(RIO_INVALID_CQ), rio_(nullptr) {}
-    
-    unique_rio_cq(RIO_CQ cq, const RIO_EXTENSION_FUNCTION_TABLE* rio) noexcept 
+
+    unique_rio_cq(RIO_CQ cq, const RIO_EXTENSION_FUNCTION_TABLE* rio) noexcept
         : cq_(cq), rio_(rio) {}
-    
+
     ~unique_rio_cq() noexcept;
-    
+
     unique_rio_cq(const unique_rio_cq&) = delete;
     unique_rio_cq& operator=(const unique_rio_cq&) = delete;
-    
-    unique_rio_cq(unique_rio_cq&& other) noexcept 
-        : cq_(other.cq_), rio_(other.rio_) {
+
+    unique_rio_cq(unique_rio_cq&& other) noexcept : cq_(other.cq_), rio_(other.rio_) {
         other.cq_ = RIO_INVALID_CQ;
         other.rio_ = nullptr;
     }
-    
+
     unique_rio_cq& operator=(unique_rio_cq&& other) noexcept {
         if (this != &other) {
             reset();
@@ -126,15 +124,15 @@ public:
         }
         return *this;
     }
-    
+
     void reset() noexcept;
-    
+
     RIO_CQ get() const noexcept { return cq_; }
-    RIO_CQ release() noexcept { 
-        RIO_CQ tmp = cq_; 
-        cq_ = RIO_INVALID_CQ; 
+    RIO_CQ release() noexcept {
+        RIO_CQ tmp = cq_;
+        cq_ = RIO_INVALID_CQ;
         rio_ = nullptr;
-        return tmp; 
+        return tmp;
     }
     operator bool() const noexcept { return cq_ != RIO_INVALID_CQ; }
 };
@@ -142,20 +140,18 @@ public:
 // RAII wrapper for RIO request queue (cleaned up automatically with completion queue)
 class unique_rio_rq {
     RIO_RQ rq_;
-    
-public:
+
+   public:
     unique_rio_rq() noexcept : rq_(RIO_INVALID_RQ) {}
     explicit unique_rio_rq(RIO_RQ rq) noexcept : rq_(rq) {}
-    
+
     ~unique_rio_rq() noexcept = default;
-    
+
     unique_rio_rq(const unique_rio_rq&) = delete;
     unique_rio_rq& operator=(const unique_rio_rq&) = delete;
-    
-    unique_rio_rq(unique_rio_rq&& other) noexcept : rq_(other.rq_) {
-        other.rq_ = RIO_INVALID_RQ;
-    }
-    
+
+    unique_rio_rq(unique_rio_rq&& other) noexcept : rq_(other.rq_) { other.rq_ = RIO_INVALID_RQ; }
+
     unique_rio_rq& operator=(unique_rio_rq&& other) noexcept {
         if (this != &other) {
             rq_ = other.rq_;
@@ -163,12 +159,12 @@ public:
         }
         return *this;
     }
-    
+
     RIO_RQ get() const noexcept { return rq_; }
-    RIO_RQ release() noexcept { 
-        RIO_RQ tmp = rq_; 
-        rq_ = RIO_INVALID_RQ; 
-        return tmp; 
+    RIO_RQ release() noexcept {
+        RIO_RQ tmp = rq_;
+        rq_ = RIO_INVALID_RQ;
+        return tmp;
     }
     operator bool() const noexcept { return rq_ != RIO_INVALID_RQ; }
 };
@@ -177,24 +173,24 @@ public:
 class unique_rio_buffer {
     RIO_BUFFERID buffer_id_;
     const RIO_EXTENSION_FUNCTION_TABLE* rio_;
-    
-public:
+
+   public:
     unique_rio_buffer() noexcept : buffer_id_(RIO_INVALID_BUFFERID), rio_(nullptr) {}
-    
-    unique_rio_buffer(RIO_BUFFERID buffer_id, const RIO_EXTENSION_FUNCTION_TABLE* rio) noexcept 
+
+    unique_rio_buffer(RIO_BUFFERID buffer_id, const RIO_EXTENSION_FUNCTION_TABLE* rio) noexcept
         : buffer_id_(buffer_id), rio_(rio) {}
-    
+
     ~unique_rio_buffer() noexcept;
-    
+
     unique_rio_buffer(const unique_rio_buffer&) = delete;
     unique_rio_buffer& operator=(const unique_rio_buffer&) = delete;
-    
-    unique_rio_buffer(unique_rio_buffer&& other) noexcept 
+
+    unique_rio_buffer(unique_rio_buffer&& other) noexcept
         : buffer_id_(other.buffer_id_), rio_(other.rio_) {
         other.buffer_id_ = RIO_INVALID_BUFFERID;
         other.rio_ = nullptr;
     }
-    
+
     unique_rio_buffer& operator=(unique_rio_buffer&& other) noexcept {
         if (this != &other) {
             reset();
@@ -205,15 +201,15 @@ public:
         }
         return *this;
     }
-    
+
     void reset() noexcept;
-    
+
     RIO_BUFFERID get() const noexcept { return buffer_id_; }
-    RIO_BUFFERID release() noexcept { 
-        RIO_BUFFERID tmp = buffer_id_; 
+    RIO_BUFFERID release() noexcept {
+        RIO_BUFFERID tmp = buffer_id_;
         buffer_id_ = RIO_INVALID_BUFFERID;
         rio_ = nullptr;
-        return tmp; 
+        return tmp;
     }
     operator bool() const noexcept { return buffer_id_ != RIO_INVALID_BUFFERID; }
 };
@@ -346,7 +342,8 @@ void associate_socket_with_iocp(const unique_socket& sock, unique_iocp& iocp,
  *              completion port on success).
  * @throws socket_exception on failure.
  */
-void set_file_completion_notification_modes(HANDLE handle, UCHAR flags = FILE_SKIP_SET_EVENT_ON_HANDLE);
+void set_file_completion_notification_modes(HANDLE handle,
+                                            UCHAR flags = FILE_SKIP_SET_EVENT_ON_HANDLE);
 
 /**
  * @brief Set the current thread's processor affinity.
@@ -435,7 +432,8 @@ RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock);
  * @return unique_rio_cq RAII wrapper.
  * @throws socket_exception on failure.
  */
-unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size, unique_event& notification_event);
+unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size,
+                                          unique_event& notification_event);
 
 /**
  * @brief Create a RIO request queue for a socket.
@@ -448,9 +446,10 @@ unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& ri
  * @return unique_rio_rq RAII wrapper.
  * @throws socket_exception on failure.
  */
-unique_rio_rq create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, const unique_socket& sock,
-                                const unique_rio_cq& completion_queue, DWORD max_outstanding_recv,
-                                DWORD max_outstanding_send);
+unique_rio_rq create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio,
+                                       const unique_socket& sock,
+                                       const unique_rio_cq& completion_queue,
+                                       DWORD max_outstanding_recv, DWORD max_outstanding_send);
 
 /**
  * @brief Register a buffer for use with RIO.
@@ -461,7 +460,8 @@ unique_rio_rq create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, 
  * @return unique_rio_buffer RAII wrapper.
  * @throws socket_exception on failure.
  */
-unique_rio_buffer register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* buffer, DWORD size);
+unique_rio_buffer register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* buffer,
+                                      DWORD size);
 
 /**
  * @brief Post a RIO receive operation.
@@ -490,7 +490,8 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
  * @param contexts Vector of RIO contexts to post receives for.
  * @throws socket_exception if the batch operation fails.
  */
-void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, const std::vector<rio_context*>& contexts);
+void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq,
+                   const std::vector<rio_context*>& contexts);
 
 /**
  * @brief Post a RIO send operation.
@@ -500,7 +501,8 @@ void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, const std
  * @param ctx RIO context with data to send.
  * @param len Length of data to send.
  */
-void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx, DWORD length);
+void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx,
+                   DWORD length);
 
 /**
  * @brief Post multiple RIO send operations in batch.
@@ -523,7 +525,7 @@ void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_conte
  * @param send_data Vector of pairs containing rio_context pointer and data length.
  * @throws socket_exception if the batch operation fails.
  */
-void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, 
+void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq,
                    const std::vector<std::pair<rio_context*, DWORD>>& send_data);
 
 //@}

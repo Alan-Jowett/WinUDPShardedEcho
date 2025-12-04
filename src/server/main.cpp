@@ -6,12 +6,12 @@
  * IPv6), affinitizes sockets and worker threads to processors, and uses
  * IO Completion Ports to efficiently process incoming datagrams and echo
  * responses back to clients.
- * 
+ *
  * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
  * SPDX-License-Identifier: MIT
  */
 
- // Scalable UDP Echo Server
+// Scalable UDP Echo Server
 // - Opens a listening socket per CPU core
 // - Uses SIO_CPU_AFFINITY to affinitize each socket
 // - Uses an IO Completion Port per listening socket
@@ -29,16 +29,6 @@
 
 #include "common/arg_parser.hpp"
 #include "common/socket_utils.hpp"
-
-#include <algorithm>
-#include <chrono>
-#include <csignal>
-#include <cstdlib>
-#include <format>
-#include <iostream>
-#include <numeric>
-#include <syncstream>
-#include <thread>
 
 // Global flag for shutdown; set to true to request orderly termination.
 std::atomic<bool> g_shutdown{false};
@@ -210,9 +200,10 @@ void worker_thread_func(server_worker_context* ctx) try {
                 if (needs_send) {
                     if (g_sync_reply.load()) {
                         try {
-                            int sent = send_sync(ctx->socket, io_ctx->buffer.data(), bytes_transferred,
-                                                 reinterpret_cast<sockaddr*>(&io_ctx->remote_addr),
-                                                 io_ctx->remote_addr_len);
+                            int sent =
+                                send_sync(ctx->socket, io_ctx->buffer.data(), bytes_transferred,
+                                          reinterpret_cast<sockaddr*>(&io_ctx->remote_addr),
+                                          io_ctx->remote_addr_len);
                             ctx->packets_sent.fetch_add(1);
                             ctx->bytes_sent.fetch_add(sent);
                         } catch (const std::exception& ex) {
@@ -290,7 +281,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
     for (size_t i = 0; i < RIO_OUTSTANDING_OPS; ++i) {
         auto rio_ctx = std::make_unique<rio_context>();
         rio_ctx->buffer_id = register_rio_buffer(ctx->rio, rio_ctx->buffer.data(),
-                                                   static_cast<DWORD>(rio_ctx->buffer.size()));
+                                                 static_cast<DWORD>(rio_ctx->buffer.size()));
         rio_ctx->addr_buffer_id = register_rio_buffer(
             ctx->rio, &rio_ctx->remote_addr, static_cast<DWORD>(sizeof(rio_ctx->remote_addr)));
         recv_contexts.push_back(std::move(rio_ctx));
@@ -301,7 +292,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
     for (size_t i = 0; i < RIO_OUTSTANDING_OPS; ++i) {
         auto rio_ctx = std::make_unique<rio_context>();
         rio_ctx->buffer_id = register_rio_buffer(ctx->rio, rio_ctx->buffer.data(),
-                                                   static_cast<DWORD>(rio_ctx->buffer.size()));
+                                                 static_cast<DWORD>(rio_ctx->buffer.size()));
         rio_ctx->addr_buffer_id = register_rio_buffer(
             ctx->rio, &rio_ctx->remote_addr, static_cast<DWORD>(sizeof(rio_ctx->remote_addr)));
         send_contexts.push_back(std::move(rio_ctx));
@@ -322,9 +313,9 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
     }
 
     if (g_verbose.load())
-        std::osyncstream(std::cout) << std::format(
-            "[CPU {}] RIO Worker started, {} outstanding receives\n", ctx->processor_id,
-            RIO_OUTSTANDING_OPS);
+        std::osyncstream(std::cout)
+            << std::format("[CPU {}] RIO Worker started, {} outstanding receives\n",
+                           ctx->processor_id, RIO_OUTSTANDING_OPS);
 
     // Completion results array
     RIORESULT results[RIO_MAX_RESULTS];
@@ -339,7 +330,8 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
             ctx->rio.RIODequeueCompletion(ctx->completion_queue.get(), results, RIO_MAX_RESULTS);
 
         if (num_results == RIO_CORRUPT_CQ) {
-            throw std::runtime_error(std::format("[CPU {}] RIO completion queue corrupted\n", ctx->processor_id));
+            throw std::runtime_error(
+                std::format("[CPU {}] RIO completion queue corrupted\n", ctx->processor_id));
         }
 
         if (num_results == 0) {
@@ -356,7 +348,8 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
             // Process all completions in this batch
             for (ULONG i = 0; i < num_results; ++i) {
                 const RIORESULT& result = results[i];
-                auto* rio_ctx = static_cast<rio_context*>(reinterpret_cast<void*>(result.RequestContext));
+                auto* rio_ctx =
+                    static_cast<rio_context*>(reinterpret_cast<void*>(result.RequestContext));
 
                 if (rio_ctx->operation == io_operation_type::recv) {
                     DWORD bytes_transferred = result.BytesTransferred;
@@ -368,14 +361,16 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
                     if (bytes_transferred > 0) {
                         if (g_sync_reply.load()) {
                             try {
-                                int sent = send_sync(ctx->socket, rio_ctx->buffer.data(), bytes_transferred,
-                                                     reinterpret_cast<sockaddr*>(&rio_ctx->remote_addr),
-                                                     rio_ctx->remote_addr_len);
+                                int sent = send_sync(
+                                    ctx->socket, rio_ctx->buffer.data(), bytes_transferred,
+                                    reinterpret_cast<sockaddr*>(&rio_ctx->remote_addr),
+                                    rio_ctx->remote_addr_len);
                                 ctx->packets_sent.fetch_add(1);
                                 ctx->bytes_sent.fetch_add(sent);
                             } catch (const std::exception& ex) {
-                                std::osyncstream(std::cerr) << std::format(
-                                    "[CPU {}] sync send failed: {}\n", ctx->processor_id, ex.what());
+                                std::osyncstream(std::cerr)
+                                    << std::format("[CPU {}] sync send failed: {}\n",
+                                                   ctx->processor_id, ex.what());
                             }
                             // Re-post receive and continue
                             recv_repost.push_back(rio_ctx);
@@ -396,7 +391,8 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
                         }
 
                         // Echo the packet back
-                        std::memcpy(send_ctx->buffer.data(), rio_ctx->buffer.data(), bytes_transferred);
+                        std::memcpy(send_ctx->buffer.data(), rio_ctx->buffer.data(),
+                                    bytes_transferred);
                         std::memcpy(&send_ctx->remote_addr, &rio_ctx->remote_addr,
                                     sizeof(rio_ctx->remote_addr));
                         send_ctx->remote_addr_len = rio_ctx->remote_addr_len;
@@ -423,13 +419,13 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
             }
 
             // Try to dequeue more completions immediately
-            num_results =
-                ctx->rio.RIODequeueCompletion(ctx->completion_queue.get(), results, RIO_MAX_RESULTS);
+            num_results = ctx->rio.RIODequeueCompletion(ctx->completion_queue.get(), results,
+                                                        RIO_MAX_RESULTS);
         } while (num_results > 0);
     }
 
     // RAII wrappers automatically clean up buffers and queues
-    
+
     if (g_verbose.load())
         std::osyncstream(std::cout) << std::format(
             "[CPU {}] RIO Worker shutting down. Stats: recv={}, sent={}, "
@@ -450,7 +446,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
 
 /**
  * @brief Common template for RPS printer thread.
- * 
+ *
  * @tparam WorkerType IOCP or RIO worker context type
  */
 template <typename WorkerType>
@@ -476,7 +472,7 @@ std::thread create_rps_thread(const std::vector<std::unique_ptr<WorkerType>>& wo
 
 /**
  * @brief Common template for printing final stats.
- * 
+ *
  * @tparam WorkerType IOCP or RIO worker context type
  */
 template <typename WorkerType>
@@ -492,14 +488,13 @@ void print_final_stats(const std::vector<std::unique_ptr<WorkerType>>& workers) 
     std::osyncstream(std::cout) << std::format("\nFinal Statistics:\n");
     std::osyncstream(std::cout) << std::format("  Total packets received: {}\n", total_recv);
     std::osyncstream(std::cout) << std::format("  Total packets sent: {}\n", total_sent);
-    std::osyncstream(std::cout)
-        << std::format("  Total bytes received: {}\n", total_bytes_recv);
+    std::osyncstream(std::cout) << std::format("  Total bytes received: {}\n", total_bytes_recv);
     std::osyncstream(std::cout) << std::format("  Total bytes sent: {}\n", total_bytes_sent);
 }
 
 /**
  * @brief Common template for joining and cleanup of worker threads.
- * 
+ *
  * @tparam WorkerType IOCP or RIO worker context type
  */
 template <typename WorkerType>
@@ -526,17 +521,19 @@ void close_iocps(std::vector<std::unique_ptr<WorkerType>>& workers) {
  * @brief Print usage/help text to stdout.
  */
 void print_usage(const char* program_name) {
-     std::cout << "Usage: " << program_name << " [options]\n"
-                  << "Options:\n"
-                  << "  --port, -p <port>         - UDP port to listen on (default: 7)\n"
-                  << "  --duration, -d <seconds>  - Run for N seconds then exit (0 = unlimited)\n"
-                  << "  --cores, -c <n>           - Number of cores to use (default: all available)\n"
-                  << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
-                      "4194304 = 4MB)\n"
-                  << "  --sync-reply, -s          - Reply synchronously using sendto (default: async IO)\n"
-                  << "  --use-rio, -r             - Use Registered I/O (RIO) mode instead of IOCP (default: IOCP)\n"
-                  << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
-                  << "  --help, -h                - Show this help\n";
+    std::cout
+        << "Usage: " << program_name << " [options]\n"
+        << "Options:\n"
+        << "  --port, -p <port>         - UDP port to listen on (default: 7)\n"
+        << "  --duration, -d <seconds>  - Run for N seconds then exit (0 = unlimited)\n"
+        << "  --cores, -c <n>           - Number of cores to use (default: all available)\n"
+        << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
+           "4194304 = 4MB)\n"
+        << "  --sync-reply, -s          - Reply synchronously using sendto (default: async IO)\n"
+        << "  --use-rio, -r             - Use Registered I/O (RIO) mode instead of IOCP (default: "
+           "IOCP)\n"
+        << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
+        << "  --help, -h                - Show this help\n";
 }
 
 /**
@@ -635,14 +632,14 @@ int main(int argc, char* argv[]) try {
         std::vector<std::unique_ptr<server_rio_worker_context>> rio_workers;
 
         // Helper to create and initialize a single RIO worker context for a given CPU id.
-        auto create_rio_worker = [&](uint32_t cpu_id, int address_family)
-            -> std::unique_ptr<server_rio_worker_context> {
+        auto create_rio_worker =
+            [&](uint32_t cpu_id, int address_family) -> std::unique_ptr<server_rio_worker_context> {
             auto ctx = std::make_unique<server_rio_worker_context>();
             ctx->processor_id = cpu_id;
             HANDLE event_handle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
             if (!event_handle || event_handle == INVALID_HANDLE_VALUE) {
-                throw socket_exception(std::format("CreateEventW failed: {}",
-                                                    get_last_error_message()));
+                throw socket_exception(
+                    std::format("CreateEventW failed: {}", get_last_error_message()));
             }
 
             ctx->notification_event.reset(event_handle);
@@ -664,15 +661,17 @@ int main(int argc, char* argv[]) try {
             bind_socket(ctx->socket, static_cast<uint16_t>(port), address_family);
 
             // Create RIO completion queue in polling mode (IOCP doesn't work with UDP)
-            ctx->completion_queue = create_rio_completion_queue(ctx->rio, RIO_CQ_SIZE, ctx->notification_event);
+            ctx->completion_queue =
+                create_rio_completion_queue(ctx->rio, RIO_CQ_SIZE, ctx->notification_event);
             if (!ctx->completion_queue) {
                 throw socket_exception(std::format("RIOCreateCompletionQueue failed (CPU {}): {}",
-                                                    cpu_id, get_last_error_message()));
+                                                   cpu_id, get_last_error_message()));
             }
 
             // Create RIO request queue
-            ctx->request_queue = create_rio_request_queue(
-                ctx->rio, ctx->socket, ctx->completion_queue, RIO_OUTSTANDING_OPS, RIO_OUTSTANDING_OPS);
+            ctx->request_queue =
+                create_rio_request_queue(ctx->rio, ctx->socket, ctx->completion_queue,
+                                         RIO_OUTSTANDING_OPS, RIO_OUTSTANDING_OPS);
 
             if (g_verbose.load())
                 std::osyncstream(std::cout)
@@ -695,8 +694,8 @@ int main(int argc, char* argv[]) try {
             ctx->worker_thread = std::jthread(worker_thread_func_rio, ctx.get());
         }
 
-        std::osyncstream(std::cout)
-            << std::format("\nServer running on port {} (RIO mode). Press Ctrl+C to stop.\n\n", port);
+        std::osyncstream(std::cout) << std::format(
+            "\nServer running on port {} (RIO mode). Press Ctrl+C to stop.\n\n", port);
 
         // RPS printer thread
         std::thread rps_thread = create_rps_thread(rio_workers);

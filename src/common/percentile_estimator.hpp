@@ -7,17 +7,17 @@
  * This header introduces `scalable_echo::PercentileEstimator`, a small,
  * thread-safe reservoir-sampling estimator suitable for bounded-memory
  * percentile estimation of streaming values.
- * 
+ *
  * @copyright Copyright (c) 2025 WinUDPShardedEcho Contributors
  * SPDX-License-Identifier: MIT
  */
 #pragma once
 
-#include <cstddef>
-#include <vector>
-#include <random>
 #include <algorithm>
+#include <cstddef>
 #include <mutex>
+#include <random>
+#include <vector>
 
 /**
  * @class PercentileEstimator
@@ -29,7 +29,7 @@
  * sorting the retained reservoir.
  */
 class PercentileEstimator {
-public:
+   public:
     // capacity: max number of samples to retain in reservoir (>=1).
     /**
      * @brief Construct a PercentileEstimator.
@@ -70,7 +70,7 @@ public:
      */
     void reset();
 
-private:
+   private:
     size_t capacity_;
     /** Mutex protecting internal reservoir state. */
     mutable std::mutex mu_;
@@ -79,5 +79,5 @@ private:
     /** RNG used for reservoir sampling. */
     std::mt19937_64 rng_;
     /** Total number of observations seen (monotonic). */
-    uint64_t seen_ = 0; // total items seen
+    uint64_t seen_ = 0;  // total items seen
 };
