@@ -439,6 +439,8 @@ std::string get_last_error_message() {
         message = std::format("Error code {}", error);
     }
 
+    message += std::format(" (code {})", error);
+
     return message;
 }
 
@@ -477,12 +479,10 @@ RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock) 
 unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size, unique_event& notification_event) {
     // Create a completion queue.
     RIO_NOTIFICATION_COMPLETION notification = {};
-    if (notification_event == nullptr) {
-        notification.Type = RIO_EVENT_COMPLETION;
-        notification.Event.EventHandle = notification_event.get();
-        notification.Event.NotifyReset = TRUE;
-    }
-    RIO_CQ cq = rio.RIOCreateCompletionQueue(queue_size, notification_event ? &notification : nullptr);
+    notification.Type = RIO_EVENT_COMPLETION;
+    notification.Event.EventHandle = notification_event.get();
+    notification.Event.NotifyReset = TRUE;
+    RIO_CQ cq = rio.RIOCreateCompletionQueue(queue_size, &notification);
     if (cq == RIO_INVALID_CQ) {
         throw socket_exception(
             std::format("RIOCreateCompletionQueue failed: {}", get_last_error_message()));
