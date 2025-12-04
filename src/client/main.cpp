@@ -366,28 +366,6 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
 }
 
 /**
- * @brief Print usage/help text to stdout.
- */
-void print_usage(const char* program_name) {
-    std::cout
-        << "Usage: " << program_name << " [options]\n"
-        << "Options:\n"
-        << "  --server, -s <host>       - Server hostname or IP (required)\n"
-        << "  --port, -p <port>         - Server UDP port (required)\n"
-        << "  --payload, -l <bytes>     - Payload size in bytes (default: 64)\n"
-        << "  --cores, -c <n>           - Number of cores/workers to use (default: all)\n"
-        << "  --duration, -d <seconds>  - Test duration in seconds (default: 10)\n"
-        << "  --rate, -r <pps>          - Packets per second total across all workers (0 = "
-           "unlimited)\n"
-        << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
-           "4194304 = 4MB)\n"
-        << "  --sockets, -k <n>         - Number of sockets to create per worker (default: 1)\n"
-        << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
-        << "  --stats-file, -o <path>   - Write final run statistics as JSON to file\n"
-        << "  --help, -h                - Show this help\n";
-}
-
-/**
  * @brief Program entry point.
  *
  * Parses command-line arguments, initializes Winsock, creates worker
@@ -397,22 +375,22 @@ void print_usage(const char* program_name) {
 int main(int argc, char* argv[]) try {
     // Use ArgParser for command-line parsing
     ArgParser parser;
-    parser.add_option("verbose", 'v', "0", false);
-    parser.add_option("server", 's', "", true);
-    parser.add_option("port", 'p', "7", true);  // Note: The IANA-assigned port for echo is 7
-    parser.add_option("payload", 'l', "64", true);
-    parser.add_option("cores", 'c', "0", true);
-    parser.add_option("duration", 'd', "10", true);
-    parser.add_option("rate", 'r', "10000", true);
-    parser.add_option("recvbuf", 'b', "4194304", true);
-    parser.add_option("sockets", 'k', "16", true);
-    parser.add_option("stats-file", 'o', "", true);
-    parser.add_option("help", 'h', "0", false);
+    parser.add_option("verbose", 'v', "0", false, "Enable verbose logging");
+    parser.add_option("server", 's', "", true, "Server IP address or hostname");
+    parser.add_option("port", 'p', "7", true, "Server UDP port (default: 7)");
+    parser.add_option("payload", 'l', "64", true, "Payload size in bytes (default: 64)");
+    parser.add_option("cores", 'c', "0", true, "Number of CPU cores to use (default: all)");
+    parser.add_option("duration", 'd', "10", true, "Test duration in seconds (default: 10)");
+    parser.add_option("rate", 'r', "10000", true, "Total packet rate limit (packets/sec, 0=unlimited)");
+    parser.add_option("recvbuf", 'b', "4194304", true, "Socket receive buffer size in bytes (default: 4194304)");
+    parser.add_option("sockets", 'k', "16", true, "Number of sockets per worker (default: 16)");
+    parser.add_option("stats-file", 'o', "", true, "Output statistics to specified file");
+    parser.add_option("help", 'h', "0", false, "Show this help message");
 
     parser.parse(argc, argv);
 
     if (parser.is_set("help")) {
-        print_usage(argv[0]);
+        parser.print_help(argv[0]);
         return 0;
     }
 

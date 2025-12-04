@@ -38,6 +38,8 @@ std::atomic<bool> g_verbose{false};
 std::atomic<bool> g_sync_reply{false};
 // If true, use RIO mode instead of IOCP.
 std::atomic<bool> g_use_rio{false};
+// If true, use RIO poll mode instead of event notification.
+std::atomic<bool> g_rio_poll_mode{false};
 
 /**
  * @brief Signal handler that requests shutdown.
@@ -339,8 +341,15 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
         }
 
         if (num_results == 0) {
+            if (g_rio_poll_mode.load()) {
+                // In poll mode, simply continue looping
+                std::this_thread::yield();
+                continue;
+            }
+            else {
             WaitForSingleObject(ctx->notification_event.get(), 10);
             continue;
+            }
         }
 
         // Process all completions in this batch
@@ -522,30 +531,6 @@ void close_iocps(std::vector<std::unique_ptr<WorkerType>>& workers) {
 }
 
 /**
- * @brief Print usage/help text to stdout.
- */
-void print_usage(const char* program_name) {
-    std::cout
-        << "Usage: " << program_name << " [options]\n"
-        << "Options:\n"
-        << "  --port, -p <port>         - UDP port to listen on (default: 7)\n"
-        << "  --duration, -d <seconds>  - Run for N seconds then exit (0 = unlimited)\n"
-        << "  --cores, -c <n>           - Number of cores to use (default: all available)\n"
-        << "  --recvbuf, -b <bytes>     - Socket receive buffer size in bytes (default: "
-           "4194304 = 4MB)\n"
-        << "  --sync-reply, -s          - Reply synchronously using sendto (default: async IO)\n"
-        << "  --use-rio, -r             - Use Registered I/O (RIO) mode instead of IOCP (default: "
-           "IOCP)\n"
-        << "  --rio-outstanding <n>     - RIO outstanding ops per socket (default: "
-        << RIO_OUTSTANDING_OPS << ")\n"
-        << "  --rio-cq-size <n>         - RIO completion queue size (default: " << RIO_CQ_SIZE
-        << ")\n"
-        << "  --rio-rq-size <n>         - RIO request queue size (default: " << RIO_RQ_SIZE << ")\n"
-        << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
-        << "  --help, -h                - Show this help\n";
-}
-
-/**
  * @brief Program entry point for the server.
  *
  * Parses options, initializes Winsock, creates worker contexts for IPv4/IPv6
@@ -553,21 +538,22 @@ void print_usage(const char* program_name) {
  */
 int main(int argc, char* argv[]) try {
     ArgParser parser;
-    parser.add_option("verbose", 'v', "0", false);
-    parser.add_option("port", 'p', "7", true);  // Note: The IANA-assigned port for echo is 7
-    parser.add_option("duration", 'd', "0", true);
-    parser.add_option("cores", 'c', "0", true);
-    parser.add_option("recvbuf", 'b', "4194304", true);
-    parser.add_option("rio-outstanding", 0, std::to_string(RIO_OUTSTANDING_OPS).c_str(), true);
-    parser.add_option("rio-cq-size", 0, std::to_string(RIO_CQ_SIZE).c_str(), true);
-    parser.add_option("rio-rq-size", 0, std::to_string(RIO_RQ_SIZE).c_str(), true);
-    parser.add_option("sync-reply", 's', "0", false);
-    parser.add_option("use-rio", 'r', "0", false);
-    parser.add_option("help", 'h', "0", false);
+    parser.add_option("verbose", 'v', "0", false, "Enable verbose logging (default: minimal)");
+    parser.add_option("port", 'p', "7", true, " UDP port to listen on (default: 7)");
+    parser.add_option("duration", 'd', "0", true, "Run for N seconds then exit (0 = unlimited)");
+    parser.add_option("cores", 'c', "0", true, "Number of cores to use (default: all available)");
+    parser.add_option("recvbuf", 'b', "4194304", true, "Socket receive buffer size in bytes (default: 4194304 = 4MB)");
+    parser.add_option("rio-outstanding", 0, std::to_string(RIO_OUTSTANDING_OPS).c_str(), true, "RIO outstanding ops per socket (default: 128)");
+    parser.add_option("rio-cq-size", 0, std::to_string(RIO_CQ_SIZE).c_str(), true, "RIO completion queue size (default: 2048)");
+    parser.add_option("rio-rq-size", 0, std::to_string(RIO_RQ_SIZE).c_str(), true, "RIO request queue size (default: 2048)");
+    parser.add_option("sync-reply", 's', "0", false, "Reply synchronously using sendto (default: async IO)");
+    parser.add_option("use-rio", 'r', "0", false, "Use Registered I/O (RIO) mode instead of IOCP (default: IOCP)");
+    parser.add_option("help", 'h', "0", false, "Show this help");
+    parser.add_option("rio-poll-mode", 0, "0", false, "Use RIO poll mode instead of event notification (default: disabled)");
     parser.parse(argc, argv);
 
     if (parser.is_set("help")) {
-        print_usage(argv[0]);
+        parser.print_help(argv[0]);
         return 0;
     }
 
@@ -581,6 +567,7 @@ int main(int argc, char* argv[]) try {
     const std::string verbose_str = parser.get("verbose");
     const std::string sync_reply_str = parser.get("sync-reply");
     const std::string use_rio_str = parser.get("use-rio");
+    const std::string rio_poll_mode_str = parser.get("rio-poll-mode");
     if (!verbose_str.empty() && verbose_str != "0") {
         g_verbose.store(true);
     }
@@ -590,7 +577,9 @@ int main(int argc, char* argv[]) try {
     if (!use_rio_str.empty() && use_rio_str != "0") {
         g_use_rio.store(true);
     }
-
+    if (!rio_poll_mode_str.empty() && rio_poll_mode_str != "0") {
+        g_rio_poll_mode.store(true);
+    }
     if (port_str.empty()) {
         throw std::invalid_argument("Port number is required");
     }
@@ -653,6 +642,8 @@ int main(int argc, char* argv[]) try {
         std::cout << std::format("RIO outstanding ops: {}\n", rio_outstanding_ops);
         std::cout << std::format("RIO CQ size: {}\n", rio_cq_size);
         std::cout << std::format("RIO RQ size: {}\n", rio_rq_size);
+        std::cout << std::format("RIO Poll Mode: {}\n",
+                                      g_rio_poll_mode.load() ? "Enabled" : "Disabled");
     }
 
     // Initialize Winsock
@@ -700,8 +691,13 @@ int main(int argc, char* argv[]) try {
             bind_socket(ctx->socket, static_cast<uint16_t>(port), address_family);
 
             // Create RIO completion queue in polling mode (IOCP doesn't work with UDP)
+            std::optional<unique_event> notification_event_opt = std::nullopt;
+            if (!g_rio_poll_mode.load()) {
+                notification_event_opt = std::move(ctx->notification_event);
+            }
             ctx->completion_queue = create_rio_completion_queue(
-                ctx->rio, static_cast<DWORD>(ctx->completion_queue_size), ctx->notification_event);
+                ctx->rio, static_cast<DWORD>(ctx->completion_queue_size),
+                notification_event_opt);
             if (!ctx->completion_queue) {
                 throw socket_exception(std::format("RIOCreateCompletionQueue failed (CPU {}): {}",
                                                    cpu_id, get_last_error_message()));

@@ -479,19 +479,29 @@ RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock) 
  * @return RIO_CQ handle for the completion queue.
  */
 unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size,
-                                          unique_event& notification_event) {
+                                          std::optional<unique_event>& notification_event) {
     // Create a completion queue.
-    RIO_NOTIFICATION_COMPLETION notification = {};
-    notification.Type = RIO_EVENT_COMPLETION;
-    notification.Event.EventHandle = notification_event.get();
-    notification.Event.NotifyReset = TRUE;
-    RIO_CQ cq = rio.RIOCreateCompletionQueue(queue_size, &notification);
-    if (cq == RIO_INVALID_CQ) {
-        throw socket_exception(
-            std::format("RIOCreateCompletionQueue failed: {}", get_last_error_message()));
-    }
+    if (!notification_event.has_value()) {
+        RIO_CQ cq = rio.RIOCreateCompletionQueue(queue_size, nullptr);
+        if (cq == RIO_INVALID_CQ) {
+            throw socket_exception(
+                std::format("RIOCreateCompletionQueue failed: {}", get_last_error_message()));
+        }
 
-    return unique_rio_cq(cq, &rio);
+        return unique_rio_cq(cq, &rio);
+    } else {
+        RIO_NOTIFICATION_COMPLETION notification = {};
+        notification.Type = RIO_EVENT_COMPLETION;
+        notification.Event.EventHandle = notification_event->get();
+        notification.Event.NotifyReset = TRUE;
+        RIO_CQ cq = rio.RIOCreateCompletionQueue(queue_size, &notification);
+        if (cq == RIO_INVALID_CQ) {
+            throw socket_exception(
+                std::format("RIOCreateCompletionQueue failed: {}", get_last_error_message()));
+        }
+
+        return unique_rio_cq(cq, &rio);
+    }
 }
 
 /**

@@ -433,7 +433,7 @@ RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock);
  * @throws socket_exception on failure.
  */
 unique_rio_cq create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size,
-                                          unique_event& notification_event);
+                                          std::optional<unique_event>& notification_event);
 
 /**
  * @brief Create a RIO request queue for a socket.

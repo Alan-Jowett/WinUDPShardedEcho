@@ -16,7 +16,7 @@
 #include <iostream>
 #include <stdexcept>
 #include <string>
-#include <unordered_map>
+#include <map>
 #include <vector>
 
 /**
@@ -145,14 +145,45 @@ class ArgParser {
     void print_help(const char* program_name) const {
         std::cout << "Usage: " << program_name << " [options]\n";
         std::cout << "Options:\n";
+        // Build display strings and compute column widths
+        struct Row { std::string optnames; std::string default_val; std::string desc; };
+        std::vector<Row> rows;
+        size_t opt_col_width = 0;
+        size_t def_col_width = 0;
         for (const auto& kv : opts_) {
             const std::string& long_name = kv.first;
             const Option& opt = kv.second;
-            std::cout << "  --" << long_name;
-            if (opt.short_name != '\0') std::cout << ", -" << opt.short_name;
-            if (opt.takes_value) std::cout << " <value>";
-            std::cout << "\tDefault: " << opt.default_value;
-            if (!opt.description.empty()) std::cout << "\t" << opt.description;
+            std::string names = "--" + long_name;
+            if (opt.short_name != '\0') {
+                names += ", -";
+                names.push_back(opt.short_name);
+            }
+            if (opt.takes_value) names += " <value>";
+            std::string def = opt.default_value;
+            if (def.empty()) def = "";
+            std::string desc = opt.description;
+            rows.push_back({names, def, desc});
+            opt_col_width = std::max(opt_col_width, names.size());
+            def_col_width = std::max(def_col_width, def.size());
+        }
+
+        // Print rows with aligned columns. Layout: two-space indent, optnames, two spaces, "Default:", pad, default, two spaces, description
+        for (const auto& r : rows) {
+            std::cout << "  ";
+            std::cout << r.optnames;
+            // pad to opt_col_width
+            if (r.optnames.size() < opt_col_width) std::cout << std::string(opt_col_width - r.optnames.size(), ' ');
+            std::cout << "  ";
+            std::cout << "Default:";
+            // pad so that defaults align in a column
+            size_t after_default = 0; // length of label "Default:"
+            after_default = 8;
+            std::cout << " ";
+            if (r.default_val.size() < def_col_width) std::cout << std::string(def_col_width - r.default_val.size(), ' ');
+            std::cout << r.default_val;
+            if (!r.desc.empty()) {
+                std::cout << "  " << r.desc;
+            }
             std::cout << "\n";
         }
     }
@@ -189,7 +220,7 @@ class ArgParser {
     };
 
     /// Map of long option name -> Option metadata and values.
-    std::unordered_map<std::string, Option> opts_;
+    std::map<std::string, Option> opts_;
     /// Map of short name -> long option name for quick lookup during parsing.
-    std::unordered_map<char, std::string> short_to_long_;
+    std::map<char, std::string> short_to_long_;
 };
