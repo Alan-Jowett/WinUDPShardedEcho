@@ -45,13 +45,19 @@ Arguments:
 - `--port, -p <port>`: UDP port to listen on (required, 1-65535)
 - `--cores, -c <num_cores>`: (Optional) Number of CPU cores to use (default: all available)
 - `--recvbuf, -b <bytes>`: (Optional) Socket receive buffer size in bytes (default: 4194304)
+- `--duration, -d <seconds>`: (Optional) Run for N seconds then exit (0 = unlimited, default: 0)
+- `--sync-reply, -s`: (Optional) Reply synchronously using sendto (default: async IO)
+- `--use-rio, -r`: (Optional) Use Registered I/O (RIO) mode instead of IOCP (default: IOCP)
+- `--verbose, -v`: (Optional) Enable verbose logging (default: minimal)
 - `--help, -h`: Show help/usage
 - `--stats-file, -o <path>`: (Client only) Write final run statistics as JSON to the given file path.
 
 Example:
 ```bash
-echo_server --port 5000                # Listen on port 5000 using all cores
-echo_server --port 5000 --cores 4      # Listen on port 5000 using 4 cores
+echo_server --port 5000                    # Listen on port 5000 using all cores (IOCP mode)
+echo_server --port 5000 --cores 4          # Listen on port 5000 using 4 cores (IOCP mode)
+echo_server --port 5000 --use-rio          # Listen on port 5000 using RIO mode
+echo_server --port 5000 --use-rio --cores 2 --duration 60  # RIO mode, 2 cores, 60 seconds
 ```
 
 ### Client
@@ -176,19 +182,57 @@ The client tracks and reports:
 
 MIT License - See [LICENSE](LICENSE) for details
 
+## IO Modes: IOCP vs RIO
+
+The server supports two I/O modes for network operations:
+
+### IOCP Mode (Default)
+Uses Windows I/O Completion Ports with overlapped socket operations:
+- **Mature and stable:** IOCP is the traditional Windows high-performance I/O model
+- **Flexibility:** Works with all socket types and operations
+- **Resource usage:** Moderate CPU overhead for completion notifications
+- **Recommendation:** Best for most production workloads and general use
+
+### RIO Mode (Registered I/O)
+Uses Windows Registered I/O (RIO) APIs introduced in Windows 8/Server 2012:
+- **Lower latency:** Reduced kernel-user mode transitions and optimized completion handling
+- **Higher throughput:** More efficient buffer management with pre-registered memory
+- **Batch processing:** Improved batching of completions through RIO completion queues
+- **Hardware optimization:** Better integration with RDMA and advanced NIC features
+- **Recommendation:** Best for ultra-high-performance scenarios and latency-sensitive workloads
+
+Enable RIO mode with the `--use-rio` flag:
+```bash
+echo_server --port 5000 --use-rio
+```
+
+### Side-by-Side Comparison
+You can run both modes to compare performance:
+```bash
+# Terminal 1: IOCP mode
+echo_server --port 5000 --cores 4
+
+# Terminal 2: RIO mode  
+echo_server --port 5001 --cores 4 --use-rio
+
+# Terminal 3: Test both
+echo_client --server localhost --port 5000 --rate 100000 --duration 30
+echo_client --server localhost --port 5001 --rate 100000 --duration 30
+```
+
 ## Synchronous Replies vs Overlapped IO
 
 The server supports two reply modes: synchronous blocking replies using `sendto` (enabled
-with `--sync-reply`) and asynchronous overlapped sends using IO Completion Ports (the default).
+with `--sync-reply`) and asynchronous overlapped sends using IO Completion Ports or RIO (the default).
 Choose based on your workload and goals:
 
 - **Latency (low load):** Synchronous replies can be slightly faster for very small, low-concurrency
    workloads because they avoid queuing and completion handling overhead.
-- **Throughput (high load):** Overlapped IO with IOCP scales much better under concurrency and
+- **Throughput (high load):** Overlapped IO with IOCP/RIO scales much better under concurrency and
    network load. Synchronous sends may block a worker thread and cause head-of-line blocking.
 - **Resource model:** Synchronous sends do not consume send-context slots or generate completion
-   events, while overlapped sends use explicit contexts and IOCP notifications.
-- **Robustness and backpressure:** IOCP-based sends are non-blocking and integrate with the OS
+   events, while overlapped sends use explicit contexts and completion notifications.
+- **Robustness and backpressure:** IOCP/RIO-based sends are non-blocking and integrate with the OS
    queuing model; synchronous sends can fail or block and require inline error handling.
 
 Recommendation: keep the default overlapped IO for production and high-throughput testing. Use

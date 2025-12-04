@@ -69,6 +69,18 @@ constexpr DWORD IOCP_TIMEOUT_MS = 10;             // IOCP polling timeout in mil
 /// Timeout used specifically during shutdown checks on the IOCP.
 constexpr DWORD IOCP_SHUTDOWN_TIMEOUT_MS = 1000;  // IOCP timeout for shutdown check
 
+// RIO configuration constants
+/// Number of outstanding RIO operations per socket.
+constexpr size_t RIO_OUTSTANDING_OPS = 256;
+/// RIO completion queue depth.
+constexpr size_t RIO_CQ_SIZE = 2048;
+/// RIO request queue depth.
+constexpr size_t RIO_RQ_SIZE = 256;
+/// Maximum number of results to dequeue from RIO CQ at once.
+constexpr ULONG RIO_MAX_RESULTS = 64;
+/// RIO polling timeout in milliseconds.
+constexpr DWORD RIO_TIMEOUT_MS = 1000;
+
 /**
  * @brief Operation type stored in the per-I/O context to indicate whether
  * the overlapped operation was a receive or a send.
@@ -118,6 +130,35 @@ struct io_context : OVERLAPPED {
 };
 
 /**
+ * @brief RIO-specific context for registered I/O operations.
+ *
+ * Instances track RIO buffer IDs, remote addresses, and operation metadata.
+ */
+struct rio_context {
+    /// Operation type (recv or send).
+    io_operation_type operation;
+    /// Backing storage for the packet.
+    std::vector<char> buffer;
+    /// RIO buffer ID for the registered buffer.
+    RIO_BUFFERID buffer_id;
+    /// Storage for the remote peer address.
+    sockaddr_storage remote_addr;
+    /// Length of the remote address in bytes.
+    int remote_addr_len;
+    /// RIO buffer ID for the remote address.
+    RIO_BUFFERID addr_buffer_id;
+
+    rio_context()
+        : operation{io_operation_type::recv},
+          buffer_id{RIO_INVALID_BUFFERID},
+          remote_addr_len{sizeof(remote_addr)},
+          addr_buffer_id{RIO_INVALID_BUFFERID} {
+        buffer.resize(MAX_PACKET_SIZE);
+        std::memset(&remote_addr, 0, sizeof(remote_addr));
+    }
+};
+
+/**
  * @name Winsock lifecycle
  * Helper functions to initialize and cleanup the Winsock stack.
  */
@@ -133,9 +174,10 @@ void cleanup_winsock();
  * @brief Create a UDP socket for the specified address family.
  *
  * @param family Address family (AF_INET or AF_INET6). Defaults to AF_INET.
+ * @param use_rio If true, creates a socket suitable for RIO (Registered I/O) operations.
  * @return A RAII `unique_socket` owning the created SOCKET.
  */
-unique_socket create_udp_socket(int family = AF_INET);
+unique_socket create_udp_socket(int family = AF_INET, bool use_rio = false);
 
 /**
  * @brief Set the CPU affinity for a socket (Windows SIO_CPU_AFFINITY).
@@ -242,3 +284,75 @@ std::pair<sockaddr_storage, int> get_socket_name(const unique_socket& sock);
  * @brief Format the last Win32 socket error into a human-readable string.
  */
 std::string get_last_error_message();
+
+/**
+ * @name Registered I/O (RIO) Functions
+ * Helper functions for working with Windows Registered I/O.
+ */
+//@{
+
+/**
+ * @brief Load RIO function table from Winsock.
+ *
+ * @param sock A valid socket used to retrieve the extension functions.
+ * @return RIO_EXTENSION_FUNCTION_TABLE containing RIO function pointers.
+ * @throws socket_exception on failure.
+ */
+RIO_EXTENSION_FUNCTION_TABLE load_rio_function_table(const unique_socket& sock);
+
+/**
+ * @brief Create a RIO completion queue.
+ *
+ * @param rio RIO function table.
+ * @param queue_size Size of the completion queue.
+ * @return RIO_CQ handle.
+ * @throws socket_exception on failure.
+ */
+RIO_CQ create_rio_completion_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, DWORD queue_size);
+
+/**
+ * @brief Create a RIO request queue for a socket.
+ *
+ * @param rio RIO function table.
+ * @param sock Socket to create the request queue for.
+ * @param completion_queue Completion queue to associate with the request queue.
+ * @param max_outstanding_recv Maximum outstanding receive operations.
+ * @param max_outstanding_send Maximum outstanding send operations.
+ * @return RIO_RQ handle.
+ * @throws socket_exception on failure.
+ */
+RIO_RQ create_rio_request_queue(const RIO_EXTENSION_FUNCTION_TABLE& rio, const unique_socket& sock,
+                                RIO_CQ completion_queue, DWORD max_outstanding_recv,
+                                DWORD max_outstanding_send);
+
+/**
+ * @brief Register a buffer for use with RIO.
+ *
+ * @param rio RIO function table.
+ * @param buffer Pointer to the buffer to register.
+ * @param size Size of the buffer in bytes.
+ * @return RIO_BUFFERID for the registered buffer.
+ * @throws socket_exception on failure.
+ */
+RIO_BUFFERID register_rio_buffer(const RIO_EXTENSION_FUNCTION_TABLE& rio, void* buffer, DWORD size);
+
+/**
+ * @brief Post a RIO receive operation.
+ *
+ * @param rio RIO function table.
+ * @param rq Request queue.
+ * @param ctx RIO context with registered buffers.
+ */
+void post_rio_recv(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx);
+
+/**
+ * @brief Post a RIO send operation.
+ *
+ * @param rio RIO function table.
+ * @param rq Request queue.
+ * @param ctx RIO context with data to send.
+ * @param len Length of data to send.
+ */
+void post_rio_send(const RIO_EXTENSION_FUNCTION_TABLE& rio, RIO_RQ rq, rio_context* ctx, size_t len);
+
+//@}
