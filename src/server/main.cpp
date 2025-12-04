@@ -77,6 +77,10 @@ struct server_worker_context {
 struct server_rio_worker_context {
     /// Logical processor id this worker is affinitized to.
     uint32_t processor_id;
+    /// Configured outstanding RIO ops and queue sizes.
+    size_t outstanding_ops{RIO_OUTSTANDING_OPS};
+    size_t completion_queue_size{RIO_CQ_SIZE};
+    size_t request_queue_size{RIO_RQ_SIZE};
     /// The UDP socket owned by the worker.
     unique_socket socket;
     /// Notification event for RIO completion queue.
@@ -278,7 +282,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
 
     // Allocate and register receive contexts
     std::vector<std::unique_ptr<rio_context>> recv_contexts;
-    for (size_t i = 0; i < RIO_OUTSTANDING_OPS; ++i) {
+    for (size_t i = 0; i < ctx->outstanding_ops; ++i) {
         auto rio_ctx = std::make_unique<rio_context>();
         rio_ctx->buffer_id = register_rio_buffer(ctx->rio, rio_ctx->buffer.data(),
                                                  static_cast<DWORD>(rio_ctx->buffer.size()));
@@ -289,7 +293,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
 
     // Pool of send contexts
     std::vector<std::unique_ptr<rio_context>> send_contexts;
-    for (size_t i = 0; i < RIO_OUTSTANDING_OPS; ++i) {
+    for (size_t i = 0; i < ctx->outstanding_ops; ++i) {
         auto rio_ctx = std::make_unique<rio_context>();
         rio_ctx->buffer_id = register_rio_buffer(ctx->rio, rio_ctx->buffer.data(),
                                                  static_cast<DWORD>(rio_ctx->buffer.size()));
@@ -306,16 +310,16 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
     {
         std::vector<rio_context*> initial_recvs;
         initial_recvs.reserve(recv_contexts.size());
-        for (auto& recv_ctx : recv_contexts) {
-            initial_recvs.push_back(recv_ctx.get());
-        }
+        std::transform(recv_contexts.begin(), recv_contexts.end(),
+                       std::back_inserter(initial_recvs),
+                       [](const std::unique_ptr<rio_context>& ptr) { return ptr.get(); });
         post_rio_recv(ctx->rio, ctx->request_queue.get(), initial_recvs);
     }
 
     if (g_verbose.load())
         std::osyncstream(std::cout)
             << std::format("[CPU {}] RIO Worker started, {} outstanding receives\n",
-                           ctx->processor_id, RIO_OUTSTANDING_OPS);
+                           ctx->processor_id, ctx->outstanding_ops);
 
     // Completion results array
     RIORESULT results[RIO_MAX_RESULTS];
@@ -386,7 +390,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
                             std::osyncstream(std::cerr) << std::format(
                                 "[CPU {}] No available RIO send context\n", ctx->processor_id);
                             // Re-post receive and continue
-                            recv_repost.push_back(rio_ctx);
+                            recv_repost.emplace_back(rio_ctx);
                             continue;
                         }
 
@@ -406,7 +410,7 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
                     recv_repost.push_back(rio_ctx);
                 } else {
                     // Send completed — return context to pool
-                    available_send_contexts.push_back(rio_ctx);
+                    available_send_contexts.emplace_back(rio_ctx);
                 }
             }
 
@@ -499,7 +503,7 @@ void print_final_stats(const std::vector<std::unique_ptr<WorkerType>>& workers) 
  */
 template <typename WorkerType>
 void cleanup_workers(std::vector<std::unique_ptr<WorkerType>>& workers) {
-    for (auto& ctx : workers) {
+    for (const auto& ctx : workers) {
         if (ctx->worker_thread.joinable()) ctx->worker_thread.join();
     }
 }
@@ -510,7 +514,7 @@ void cleanup_workers(std::vector<std::unique_ptr<WorkerType>>& workers) {
  */
 template <typename WorkerType>
 void close_iocps(std::vector<std::unique_ptr<WorkerType>>& workers) {
-    for (auto& ctx : workers) {
+    for (const auto& ctx : workers) {
         if constexpr (requires { ctx->iocp; }) {
             ctx->iocp.reset();
         }
@@ -532,6 +536,11 @@ void print_usage(const char* program_name) {
         << "  --sync-reply, -s          - Reply synchronously using sendto (default: async IO)\n"
         << "  --use-rio, -r             - Use Registered I/O (RIO) mode instead of IOCP (default: "
            "IOCP)\n"
+        << "  --rio-outstanding <n>     - RIO outstanding ops per socket (default: "
+        << RIO_OUTSTANDING_OPS << ")\n"
+        << "  --rio-cq-size <n>         - RIO completion queue size (default: " << RIO_CQ_SIZE
+        << ")\n"
+        << "  --rio-rq-size <n>         - RIO request queue size (default: " << RIO_RQ_SIZE << ")\n"
         << "  --verbose, -v             - Enable verbose logging (default: minimal)\n"
         << "  --help, -h                - Show this help\n";
 }
@@ -549,6 +558,9 @@ int main(int argc, char* argv[]) try {
     parser.add_option("duration", 'd', "0", true);
     parser.add_option("cores", 'c', "0", true);
     parser.add_option("recvbuf", 'b', "4194304", true);
+    parser.add_option("rio-outstanding", 0, std::to_string(RIO_OUTSTANDING_OPS).c_str(), true);
+    parser.add_option("rio-cq-size", 0, std::to_string(RIO_CQ_SIZE).c_str(), true);
+    parser.add_option("rio-rq-size", 0, std::to_string(RIO_RQ_SIZE).c_str(), true);
     parser.add_option("sync-reply", 's', "0", false);
     parser.add_option("use-rio", 'r', "0", false);
     parser.add_option("help", 'h', "0", false);
@@ -562,6 +574,9 @@ int main(int argc, char* argv[]) try {
     const std::string port_str = parser.get("port");
     const std::string cores_str = parser.get("cores");
     const std::string recvbuf_str = parser.get("recvbuf");
+    const std::string rio_outstanding_str = parser.get("rio-outstanding");
+    const std::string rio_cq_size_str = parser.get("rio-cq-size");
+    const std::string rio_rq_size_str = parser.get("rio-rq-size");
     const std::string duration_str = parser.get("duration");
     const std::string verbose_str = parser.get("verbose");
     const std::string sync_reply_str = parser.get("sync-reply");
@@ -586,9 +601,6 @@ int main(int argc, char* argv[]) try {
         throw std::invalid_argument("Invalid port number");
     }
     int port = static_cast<int>(port_l);
-    if (port <= 0 || port > 65535) {
-        throw std::invalid_argument("Port number out of range");
-    }
 
     uint32_t num_processors = get_processor_count();
     uint32_t num_workers = num_processors;
@@ -606,6 +618,25 @@ int main(int argc, char* argv[]) try {
         if (v > 0) recvbuf = static_cast<int>(v);
     }
 
+    // Parse RIO configuration
+    size_t rio_outstanding_ops = RIO_OUTSTANDING_OPS;
+    if (!rio_outstanding_str.empty()) {
+        long long v = std::strtoll(rio_outstanding_str.c_str(), nullptr, 10);
+        if (v > 0) rio_outstanding_ops = static_cast<size_t>(v);
+    }
+
+    size_t rio_cq_size = RIO_CQ_SIZE;
+    if (!rio_cq_size_str.empty()) {
+        long long v = std::strtoll(rio_cq_size_str.c_str(), nullptr, 10);
+        if (v > 0) rio_cq_size = static_cast<size_t>(v);
+    }
+
+    size_t rio_rq_size = RIO_RQ_SIZE;
+    if (!rio_rq_size_str.empty()) {
+        long long v = std::strtoll(rio_rq_size_str.c_str(), nullptr, 10);
+        if (v > 0) rio_rq_size = static_cast<size_t>(v);
+    }
+
     // Parse optional duration (seconds)
     int duration_sec = 0;
     if (!duration_str.empty()) {
@@ -618,6 +649,11 @@ int main(int argc, char* argv[]) try {
     std::cout << std::format("Available processors: {}\n", num_processors);
     std::cout << std::format("Using {} worker(s)\n", num_workers);
     std::cout << std::format("IO Mode: {}\n", g_use_rio.load() ? "RIO" : "IOCP");
+    if (g_use_rio.load()) {
+        std::cout << std::format("RIO outstanding ops: {}\n", rio_outstanding_ops);
+        std::cout << std::format("RIO CQ size: {}\n", rio_cq_size);
+        std::cout << std::format("RIO RQ size: {}\n", rio_rq_size);
+    }
 
     // Initialize Winsock
     initialize_winsock();
@@ -636,6 +672,9 @@ int main(int argc, char* argv[]) try {
             [&](uint32_t cpu_id, int address_family) -> std::unique_ptr<server_rio_worker_context> {
             auto ctx = std::make_unique<server_rio_worker_context>();
             ctx->processor_id = cpu_id;
+            ctx->outstanding_ops = rio_outstanding_ops;
+            ctx->completion_queue_size = rio_cq_size;
+            ctx->request_queue_size = rio_rq_size;
             HANDLE event_handle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
             if (!event_handle || event_handle == INVALID_HANDLE_VALUE) {
                 throw socket_exception(
@@ -661,17 +700,17 @@ int main(int argc, char* argv[]) try {
             bind_socket(ctx->socket, static_cast<uint16_t>(port), address_family);
 
             // Create RIO completion queue in polling mode (IOCP doesn't work with UDP)
-            ctx->completion_queue =
-                create_rio_completion_queue(ctx->rio, RIO_CQ_SIZE, ctx->notification_event);
+            ctx->completion_queue = create_rio_completion_queue(
+                ctx->rio, static_cast<DWORD>(ctx->completion_queue_size), ctx->notification_event);
             if (!ctx->completion_queue) {
                 throw socket_exception(std::format("RIOCreateCompletionQueue failed (CPU {}): {}",
                                                    cpu_id, get_last_error_message()));
             }
 
             // Create RIO request queue
-            ctx->request_queue =
-                create_rio_request_queue(ctx->rio, ctx->socket, ctx->completion_queue,
-                                         RIO_OUTSTANDING_OPS, RIO_OUTSTANDING_OPS);
+            ctx->request_queue = create_rio_request_queue(
+                ctx->rio, ctx->socket, ctx->completion_queue,
+                static_cast<DWORD>(ctx->outstanding_ops), static_cast<DWORD>(ctx->outstanding_ops));
 
             if (g_verbose.load())
                 std::osyncstream(std::cout)

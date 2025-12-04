@@ -445,9 +445,6 @@ int main(int argc, char* argv[]) try {
         throw std::invalid_argument("Invalid port number");
     }
     int port = static_cast<int>(port_l);
-    if (port <= 0 || port > 65535) {
-        throw std::invalid_argument("Port number out of range");
-    }
 
     payload_size = static_cast<size_t>(std::strtoul(payload_str.c_str(), nullptr, 10));
     if (payload_size == 0 || payload_size > MAX_PAYLOAD_SIZE) {
