@@ -306,9 +306,9 @@ void worker_thread_func_rio(server_rio_worker_context* ctx) try {
     {
         std::vector<rio_context*> initial_recvs;
         initial_recvs.reserve(recv_contexts.size());
-        for (auto& recv_ctx : recv_contexts) {
-            initial_recvs.push_back(recv_ctx.get());
-        }
+        std::transform(recv_contexts.begin(), recv_contexts.end(),
+                       std::back_inserter(initial_recvs),
+                       [](const std::unique_ptr<rio_context>& ptr) { return ptr.get(); });
         post_rio_recv(ctx->rio, ctx->request_queue.get(), initial_recvs);
     }
 
@@ -499,7 +499,7 @@ void print_final_stats(const std::vector<std::unique_ptr<WorkerType>>& workers) 
  */
 template <typename WorkerType>
 void cleanup_workers(std::vector<std::unique_ptr<WorkerType>>& workers) {
-    for (auto& ctx : workers) {
+    for (const auto& ctx : workers) {
         if (ctx->worker_thread.joinable()) ctx->worker_thread.join();
     }
 }
@@ -510,7 +510,7 @@ void cleanup_workers(std::vector<std::unique_ptr<WorkerType>>& workers) {
  */
 template <typename WorkerType>
 void close_iocps(std::vector<std::unique_ptr<WorkerType>>& workers) {
-    for (auto& ctx : workers) {
+    for (const auto& ctx : workers) {
         if constexpr (requires { ctx->iocp; }) {
             ctx->iocp.reset();
         }
@@ -586,9 +586,6 @@ int main(int argc, char* argv[]) try {
         throw std::invalid_argument("Invalid port number");
     }
     int port = static_cast<int>(port_l);
-    if (port <= 0 || port > 65535) {
-        throw std::invalid_argument("Port number out of range");
-    }
 
     uint32_t num_processors = get_processor_count();
     uint32_t num_workers = num_processors;
