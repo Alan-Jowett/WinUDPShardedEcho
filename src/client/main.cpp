@@ -33,6 +33,7 @@
 #include "common/socket_utils.hpp"
 #include "common/tdigest.hpp"
 #include "common/pacer.hpp"
+#include "common/reno.hpp"
 
 // Global flag for shutdown; set to true to request orderly termination.
 std::atomic<bool> g_shutdown{false};
@@ -40,6 +41,8 @@ std::atomic<bool> g_shutdown{false};
 std::atomic<bool> g_verbose{false};
 // Start signal to synchronize when workers begin sending
 std::atomic<bool> g_start_sending{false};
+// Signal to stop sending but allow processing of outstanding replies
+std::atomic<bool> g_stop_sending{false};
 
 /**
  * @brief Signal handler that requests shutdown.
@@ -257,6 +260,10 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
  
     while (!g_shutdown.load()) {
         uint64_t sent_so_far = ctx->packets_sent.load();
+        // Stop initiating new sends when ordered to stop; this allows in-flight
+        // replies to be processed and not counted as dropped.
+        if (g_stop_sending.load()) break;
+
         while (!available_send_contexts.empty() && ctx->pacer->can_send()) {
             auto* send_ctx = available_send_contexts.back();
             available_send_contexts.pop_back();
@@ -755,6 +762,12 @@ int main(int argc, char* argv[]) try {
                                  total_recv, total_sent - total_recv);
     }
 
+    // Signal workers to stop sending new packets, allow in-flight replies to arrive
+    g_stop_sending.store(true);
+    // Wait 1 second for in-flight replies to be processed
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    // Now request shutdown to terminate worker loops
     g_shutdown.store(true);
     std::cout << "\nStopping workers...\n";
 

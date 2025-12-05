@@ -19,6 +19,9 @@ public:
         // initialize min RTT unknown; cwnd start small
         cwnd_packets_ = 10.0; // start with modest cwnd
         ssthresh_ = 1000.0;
+        // store initial request rate and seed pacing rate
+        initial_rate_pps_ = pps;
+        pacing_rate_pps_ = pps;
         // approximate initial window -> target pps when min RTT known
         // leave ewma and min_rtt unset until acks arrive
     }
@@ -31,9 +34,10 @@ public:
     void on_ack(uint64_t now_ns, uint64_t seq, uint64_t rtt_ns) {
         if (unlimited_) return;
 
-        // update min RTT observed
+        // update min RTT observed and remember last RTT
         if (rtt_ns > 0) {
             if (min_rtt_ns_ == 0 || rtt_ns < min_rtt_ns_) min_rtt_ns_ = rtt_ns;
+            last_rtt_ns_ = rtt_ns;
         }
 
         // Remove send tracking
@@ -78,15 +82,18 @@ public:
 private:
     void update_target_rate() {
         if (min_rtt_ns_ == 0) {
-            pacing_rate_pps_ = 0.0;
+            // keep existing pacing rate if we don't yet have a min RTT
             return;
         }
         double min_rtt_s = static_cast<double>(min_rtt_ns_) / 1e9;
-        if (min_rtt_s <= 0.0) {
-            pacing_rate_pps_ = 0.0;
-            return;
-        }
+        if (min_rtt_s <= 0.0) return;
         pacing_rate_pps_ = cwnd_packets_ / min_rtt_s;
+        // Clamp to avoid runaway: limit to a multiplier of initial requested rate
+        const double max_mult = 1.0; // do not exceed initial requested rate
+        if (initial_rate_pps_ > 0.0) {
+            double cap = initial_rate_pps_ * max_mult;
+            if (pacing_rate_pps_ > cap) pacing_rate_pps_ = cap;
+        }
         if (pacing_rate_pps_ < 1.0) pacing_rate_pps_ = 1.0;
     }
 
@@ -97,6 +104,7 @@ private:
     double ssthresh_{1000.0};
     double pacing_rate_pps_{0.0};
     std::unordered_map<uint64_t, uint64_t> send_times_;
+    double initial_rate_pps_{0.0};
 
     const double rtt_inflation_threshold_{1.6};
 };
