@@ -1,0 +1,38 @@
+var socket__utils_8hpp =
+[
+    [ "packet_header", "structpacket__header.html", "structpacket__header" ],
+    [ "socket_exception", "classsocket__exception.html", "classsocket__exception" ],
+    [ "io_context", "structio__context.html", "structio__context" ],
+    [ "WIN32_LEAN_AND_MEAN", "socket__utils_8hpp.html#ac7bef5d85e3dcd73eef56ad39ffc84a9", null ],
+    [ "unique_event", "socket__utils_8hpp.html#a38372d7e282e7807a0980651dcda3f2c", null ],
+    [ "unique_iocp", "socket__utils_8hpp.html#ad3e10b402cca9fffa66cda3d2f62b18a", null ],
+    [ "unique_socket", "socket__utils_8hpp.html#a33fbd73132e371fc1ff01523baa1838d", null ],
+    [ "io_operation_type", "socket__utils_8hpp.html#a65b578e012180e7c9369af36123d0528", [
+      [ "recv", "socket__utils_8hpp.html#a65b578e012180e7c9369af36123d0528af701fee85540b78d08cb276d14953d58", null ],
+      [ "send", "socket__utils_8hpp.html#a65b578e012180e7c9369af36123d0528a2541d938b0a58946090d7abdde0d3890", null ]
+    ] ],
+    [ "associate_socket_with_iocp", "socket__utils_8hpp.html#aed28ad6d08e188ae40a1241d7dce46fe", null ],
+    [ "bind_socket", "socket__utils_8hpp.html#a255bf86bb4efe3c63ef792c04861631f", null ],
+    [ "cleanup_winsock", "socket__utils_8hpp.html#a613a0788ce65dc73402a9750f68ac8cb", null ],
+    [ "create_iocp", "socket__utils_8hpp.html#a72a446f3b31a096288652a4d72008fc2", null ],
+    [ "create_iocp_and_associate", "socket__utils_8hpp.html#a80e28ba6030cccb16bb546b4367bc339", null ],
+    [ "create_udp_socket", "socket__utils_8hpp.html#aa8f857e179dcf9f759d1c9bf85bd1b3c", null ],
+    [ "get_last_error_message", "socket__utils_8hpp.html#a9079ca5e394407fd979f6ca4fd748af3", null ],
+    [ "get_processor_count", "socket__utils_8hpp.html#a187c3884d0329fcb430acca9bd5b5475", null ],
+    [ "get_socket_name", "socket__utils_8hpp.html#a507f86978c8a91c38a2f03302f7ac459", null ],
+    [ "get_timestamp_ns", "socket__utils_8hpp.html#a39b87de7e582017d965787fa97e41f79", null ],
+    [ "initialize_winsock", "socket__utils_8hpp.html#aa5728a3989e32ddfadaa8ffb68f8b856", null ],
+    [ "post_recv", "socket__utils_8hpp.html#a60a0eb7e6ded37c0b5a69030a0ce2499", null ],
+    [ "post_send", "socket__utils_8hpp.html#accd850ed5ced16a59cf904f592e12abf", null ],
+    [ "send_sync", "socket__utils_8hpp.html#a3732f25dba195f242cc166347f1c3c5c", null ],
+    [ "set_file_completion_notification_modes", "socket__utils_8hpp.html#ad3dcef2fa26afe910d48f0b95d0d48ae", null ],
+    [ "set_socket_cpu_affinity", "socket__utils_8hpp.html#aba953de4c07bd7006485e12a3ea8a09f", null ],
+    [ "set_socket_option", "socket__utils_8hpp.html#ad848fbdcf1ba3d815930644454f25817", null ],
+    [ "set_thread_affinity", "socket__utils_8hpp.html#af3f20a9ce53c3700dde9180dff139d72", null ],
+    [ "HEADER_SIZE", "socket__utils_8hpp.html#a583f687ec76654049acae67dc9d6288f", null ],
+    [ "IOCP_SHUTDOWN_TIMEOUT_MS", "socket__utils_8hpp.html#a152d6035510845597230205a9e09d606", null ],
+    [ "IOCP_TIMEOUT_MS", "socket__utils_8hpp.html#a4654d03c0934fb2f6dbf7eacb28c91a4", null ],
+    [ "MAX_PACKET_SIZE", "socket__utils_8hpp.html#a9832c8b70a5297ecd72cdaae4a58d45d", null ],
+    [ "MAX_PAYLOAD_SIZE", "socket__utils_8hpp.html#a9debea2742a938b16b6f5c125a6eaab8", null ],
+    [ "OUTSTANDING_OPS", "socket__utils_8hpp.html#a039f815ac1325125001b5632a11bde14", null ]
+];

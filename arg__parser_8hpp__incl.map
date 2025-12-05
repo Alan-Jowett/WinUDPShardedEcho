@@ -1,0 +1,15 @@
+<map id="src/common/arg_parser.hpp" name="src/common/arg_parser.hpp">
+<area shape="rect" id="Node000001" title="Lightweight command&#45;line argument parser used by client/server examples." alt="" coords="171,5,373,31"/>
+<area shape="rect" id="Node000002" title=" " alt="" coords="5,79,72,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="235,33,86,78,84,73,234,28"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="96,79,176,104"/>
+<area shape="poly" id="edge2_Node000001_Node000003" title=" " alt="" coords="251,33,171,75,169,70,249,28"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="200,79,251,104"/>
+<area shape="poly" id="edge3_Node000001_Node000004" title=" " alt="" coords="267,32,243,69,238,66,262,30"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="275,79,362,104"/>
+<area shape="poly" id="edge4_Node000001_Node000005" title=" " alt="" coords="282,30,306,66,301,69,277,32"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="387,79,445,104"/>
+<area shape="poly" id="edge5_Node000001_Node000006" title=" " alt="" coords="296,28,381,70,379,75,294,33"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="470,79,533,104"/>
+<area shape="poly" id="edge6_Node000001_Node000007" title=" " alt="" coords="310,28,457,74,456,79,308,33"/>
+</map>

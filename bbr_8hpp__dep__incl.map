@@ -1,0 +1,5 @@
+<map id="src/common/bbr.hpp" name="src/common/bbr.hpp">
+<area shape="rect" id="Node000001" title="Simple header&#45;only BBR&#45;like congestion controller (lightweight, approximate)" alt="" coords="5,5,160,31"/>
+<area shape="rect" id="Node000002" href="$client_2main_8cpp.html" title="Scalable UDP echo client." alt="" coords="10,79,155,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="85,44,85,79,80,79,80,44"/>
+</map>

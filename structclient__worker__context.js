@@ -1,0 +1,25 @@
+var structclient__worker__context =
+[
+    [ "bytes_received", "structclient__worker__context.html#a913bf98dccc87f152f7378162315cc34", null ],
+    [ "bytes_sent", "structclient__worker__context.html#a0144086ac1bf6f6623901bb3c9a5a95c", null ],
+    [ "curren_rtt_tdigest", "structclient__worker__context.html#a7b2fb56baa6ac160062a3fe8487d05b5", null ],
+    [ "current_pacing_tdigest", "structclient__worker__context.html#ab0b205386278a1cd66eea1e0475f35b5", null ],
+    [ "iocp", "structclient__worker__context.html#a3416b7eefca2ac0eb340bc69aa9085f6", null ],
+    [ "last_send_timestamp_ns", "structclient__worker__context.html#ad4c85da40f74f4425db5f5f35bb3f289", null ],
+    [ "max_rtt_ns", "structclient__worker__context.html#a36443e6d1de3cfe37920939c6ad514ce", null ],
+    [ "min_rtt_ns", "structclient__worker__context.html#a4f2b2283ab7740759307ec5bc0ff5b00", null ],
+    [ "next_sequence", "structclient__worker__context.html#a7b8817a040d0b9b366ae421c48019fc5", null ],
+    [ "next_socket_index", "structclient__worker__context.html#aabea5a7dc5210c28669c0574067e31eb", null ],
+    [ "outstanding_sequences", "structclient__worker__context.html#a1d6cee05a6fa8d1e75a346ccbe8fceea", null ],
+    [ "pacer", "structclient__worker__context.html#aef9a8d7161f0c7d7186752c4496d4c5e", null ],
+    [ "packets_dropped", "structclient__worker__context.html#aa9a24cd4139dab02dbff6c08964b9fe5", null ],
+    [ "packets_received", "structclient__worker__context.html#a6eec8ae0c33ba65bc5e5ef38dc30f4ac", null ],
+    [ "packets_sent", "structclient__worker__context.html#aac163c0ca62c4954b804fee88b4f7866", null ],
+    [ "per_worker_rate", "structclient__worker__context.html#adc58333a6a0ebaf6eca87210c4963988", null ],
+    [ "processor_id", "structclient__worker__context.html#ae9a514b81ce24ef24b76e6c2515dea13", null ],
+    [ "server_addr", "structclient__worker__context.html#a720b6492dd240ccf755fe95ae26fb195", null ],
+    [ "server_addr_len", "structclient__worker__context.html#a1dcd49aab4c0684bdb3f21ff07022637", null ],
+    [ "sockets", "structclient__worker__context.html#a9a8287a117b7a47f4469f4c648588914", null ],
+    [ "total_rtt_ns", "structclient__worker__context.html#a7af6831932364a4e3d3b584a7b4eb525", null ],
+    [ "worker_thread", "structclient__worker__context.html#a23d7fbea2eef3e92cfc90153c24c38c2", null ]
+];

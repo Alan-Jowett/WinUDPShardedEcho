@@ -1,0 +1,21 @@
+var searchData=
+[
+  ['send_0',['send',['../socket__utils_8hpp.html#a65b578e012180e7c9369af36123d0528a2541d938b0a58946090d7abdde0d3890',1,'socket_utils.hpp']]],
+  ['send_5fsync_1',['send_sync',['../socket__utils_8hpp.html#a3732f25dba195f242cc166347f1c3c5c',1,'send_sync(const unique_socket &amp;sock, const char *data, size_t len, const sockaddr *dest_addr, int dest_addr_len):&#160;socket_utils.cpp'],['../socket__utils_8cpp.html#a3732f25dba195f242cc166347f1c3c5c',1,'send_sync(const unique_socket &amp;sock, const char *data, size_t len, const sockaddr *dest_addr, int dest_addr_len):&#160;socket_utils.cpp']]],
+  ['sequence_5fnumber_2',['sequence_number',['../structpacket__header.html#a74867188a993e51130b22b2a632c77a4',1,'packet_header']]],
+  ['server_5faddr_3',['server_addr',['../structclient__worker__context.html#a720b6492dd240ccf755fe95ae26fb195',1,'client_worker_context']]],
+  ['server_5faddr_5flen_4',['server_addr_len',['../structclient__worker__context.html#a1dcd49aab4c0684bdb3f21ff07022637',1,'client_worker_context']]],
+  ['server_5fworker_5fcontext_5',['server_worker_context',['../structserver__worker__context.html',1,'']]],
+  ['set_5ffile_5fcompletion_5fnotification_5fmodes_6',['set_file_completion_notification_modes',['../socket__utils_8hpp.html#ad3dcef2fa26afe910d48f0b95d0d48ae',1,'set_file_completion_notification_modes(HANDLE handle, UCHAR flags=FILE_SKIP_SET_EVENT_ON_HANDLE):&#160;socket_utils.cpp'],['../socket__utils_8cpp.html#a37b80cfbd678e32a3fdb9b7be89dab4c',1,'set_file_completion_notification_modes(HANDLE handle, UCHAR flags):&#160;socket_utils.cpp']]],
+  ['set_5finitial_5frate_7',['set_initial_rate',['../classbbr__congestion__controller.html#a0dbd259d85d66133990d2fd42e105177',1,'bbr_congestion_controller::set_initial_rate()'],['../classnull__congestion__controller.html#ac8fac050ee909e7aa9ea1c3a278cbcd7',1,'null_congestion_controller::set_initial_rate()'],['../classreno__congestion__controller.html#ab318dfa1fb4972c495b216b1d6a87271',1,'reno_congestion_controller::set_initial_rate()']]],
+  ['set_5fsocket_5fcpu_5faffinity_8',['set_socket_cpu_affinity',['../socket__utils_8hpp.html#aba953de4c07bd7006485e12a3ea8a09f',1,'set_socket_cpu_affinity(const unique_socket &amp;sock, uint16_t processor_id):&#160;socket_utils.cpp'],['../socket__utils_8cpp.html#aba953de4c07bd7006485e12a3ea8a09f',1,'set_socket_cpu_affinity(const unique_socket &amp;sock, uint16_t processor_id):&#160;socket_utils.cpp']]],
+  ['set_5fsocket_5foption_9',['set_socket_option',['../socket__utils_8cpp.html#ad848fbdcf1ba3d815930644454f25817',1,'set_socket_option(const unique_socket &amp;sock, int level, int optname, const char *optval, int optlen):&#160;socket_utils.cpp'],['../socket__utils_8hpp.html#ad848fbdcf1ba3d815930644454f25817',1,'set_socket_option(const unique_socket &amp;sock, int level, int optname, const char *optval, int optlen):&#160;socket_utils.cpp']]],
+  ['set_5fthread_5faffinity_10',['set_thread_affinity',['../socket__utils_8cpp.html#af3f20a9ce53c3700dde9180dff139d72',1,'set_thread_affinity(uint32_t processor_id):&#160;socket_utils.cpp'],['../socket__utils_8hpp.html#af3f20a9ce53c3700dde9180dff139d72',1,'set_thread_affinity(uint32_t processor_id):&#160;socket_utils.cpp']]],
+  ['signal_5fhandler_11',['signal_handler',['../client_2main_8cpp.html#a8804db44b6d4c5752e6de5593562df06',1,'signal_handler(int):&#160;main.cpp'],['../server_2main_8cpp.html#a8804db44b6d4c5752e6de5593562df06',1,'signal_handler(int):&#160;main.cpp']]],
+  ['sio_5fcpu_5faffinity_12',['SIO_CPU_AFFINITY',['../socket__utils_8cpp.html#a222ac17c867761e4c1d7c8aeb097a6c7',1,'socket_utils.cpp']]],
+  ['socket_13',['socket',['../structserver__worker__context.html#aae0d2985233d335cb213bc5fc6cc730f',1,'server_worker_context']]],
+  ['socket_5fexception_14',['socket_exception',['../classsocket__exception.html#a7aa56e14c33b84adb73fb5810039d2b8',1,'socket_exception::socket_exception()'],['../classsocket__exception.html',1,'socket_exception']]],
+  ['socket_5futils_2ecpp_15',['socket_utils.cpp',['../socket__utils_8cpp.html',1,'']]],
+  ['socket_5futils_2ehpp_16',['socket_utils.hpp',['../socket__utils_8hpp.html',1,'']]],
+  ['sockets_17',['sockets',['../structclient__worker__context.html#a9a8287a117b7a47f4469f4c648588914',1,'client_worker_context']]]
+];

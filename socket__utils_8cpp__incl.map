@@ -1,0 +1,37 @@
+<map id="src/common/socket_utils.cpp" name="src/common/socket_utils.cpp">
+<area shape="rect" id="Node000001" title="Implementation of Win32 socket utilities and IOCP helpers." alt="" coords="773,5,983,31"/>
+<area shape="rect" id="Node000002" href="$socket__utils_8hpp.html" title="Cross&#45;cutting Win32 socket utilities and IOCP helpers used by the demo." alt="" coords="815,79,941,104"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="881,31,881,65,875,65,875,31"/>
+<area shape="rect" id="Node000003" title=" " alt="" coords="5,152,100,177"/>
+<area shape="poly" id="edge2_Node000002_Node000003" title=" " alt="" coords="815,98,516,115,318,131,114,154,114,149,318,126,516,110,814,92"/>
+<area shape="rect" id="Node000004" title=" " alt="" coords="124,152,219,177"/>
+<area shape="poly" id="edge3_Node000002_Node000004" title=" " alt="" coords="814,99,564,118,401,134,233,154,233,149,401,128,563,113,814,94"/>
+<area shape="rect" id="Node000005" title=" " alt="" coords="243,152,356,177"/>
+<area shape="poly" id="edge4_Node000002_Node000005" title=" " alt="" coords="815,102,620,123,370,155,369,149,620,118,814,96"/>
+<area shape="rect" id="Node000006" title=" " alt="" coords="381,152,471,177"/>
+<area shape="poly" id="edge5_Node000002_Node000006" title=" " alt="" coords="815,104,485,154,484,149,814,99"/>
+<area shape="rect" id="Node000007" title=" " alt="" coords="496,152,588,177"/>
+<area shape="poly" id="edge6_Node000002_Node000007" title=" " alt="" coords="825,107,602,153,601,148,823,101"/>
+<area shape="rect" id="Node000008" title=" " alt="" coords="613,152,679,177"/>
+<area shape="poly" id="edge7_Node000002_Node000008" title=" " alt="" coords="842,107,693,152,691,147,840,101"/>
+<area shape="rect" id="Node000009" title=" " alt="" coords="703,152,770,177"/>
+<area shape="poly" id="edge8_Node000002_Node000009" title=" " alt="" coords="856,106,773,148,771,143,854,102"/>
+<area shape="rect" id="Node000010" title=" " alt="" coords="794,152,861,177"/>
+<area shape="poly" id="edge9_Node000002_Node000010" title=" " alt="" coords="872,106,846,142,841,139,867,103"/>
+<area shape="rect" id="Node000011" title=" " alt="" coords="885,152,972,177"/>
+<area shape="poly" id="edge10_Node000002_Node000011" title=" " alt="" coords="889,103,915,139,910,142,884,106"/>
+<area shape="rect" id="Node000012" title=" " alt="" coords="997,152,1077,177"/>
+<area shape="poly" id="edge11_Node000002_Node000012" title=" " alt="" coords="905,102,999,144,997,149,902,106"/>
+<area shape="rect" id="Node000013" title=" " alt="" coords="1101,152,1178,177"/>
+<area shape="poly" id="edge12_Node000002_Node000013" title=" " alt="" coords="921,101,1088,147,1087,152,919,107"/>
+<area shape="rect" id="Node000014" title=" " alt="" coords="1202,152,1277,177"/>
+<area shape="poly" id="edge13_Node000002_Node000014" title=" " alt="" coords="942,101,1189,149,1188,154,941,107"/>
+<area shape="rect" id="Node000015" title=" " alt="" coords="1301,152,1359,177"/>
+<area shape="poly" id="edge14_Node000002_Node000015" title=" " alt="" coords="942,97,1095,116,1287,149,1287,155,1095,122,941,102"/>
+<area shape="rect" id="Node000016" title=" " alt="" coords="1383,152,1447,177"/>
+<area shape="poly" id="edge15_Node000002_Node000016" title=" " alt="" coords="942,95,1130,114,1248,129,1370,149,1369,155,1247,135,1129,119,941,100"/>
+<area shape="rect" id="Node000017" title=" " alt="" coords="1472,152,1532,177"/>
+<area shape="poly" id="edge16_Node000002_Node000017" title=" " alt="" coords="942,93,1166,111,1310,127,1459,150,1458,155,1310,132,1166,116,941,99"/>
+<area shape="rect" id="Node000018" title=" " alt="" coords="1556,152,1619,177"/>
+<area shape="poly" id="edge17_Node000002_Node000018" title=" " alt="" coords="942,92,1201,108,1369,125,1543,149,1542,155,1369,130,1200,113,941,97"/>
+</map>

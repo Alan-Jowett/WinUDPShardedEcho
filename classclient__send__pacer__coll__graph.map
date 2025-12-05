@@ -1,0 +1,5 @@
+<map id="client_send_pacer&lt; CongestionController &gt;" name="client_send_pacer&lt; CongestionController &gt;">
+<area shape="rect" id="Node000001" title="Client send pacer using token bucket algorithm." alt="" coords="5,79,184,119"/>
+<area shape="rect" id="Node000002" href="$classclient__send__pacer__base.html" title="Abstract base for client send pacer. Provides a stable polymorphic interface so different templated p..." alt="" coords="6,5,183,31"/>
+<area shape="poly" id="edge1_Node000001_Node000002" title=" " alt="" coords="97,44,97,79,92,79,92,44"/>
+</map>

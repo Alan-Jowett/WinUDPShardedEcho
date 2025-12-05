@@ -1,0 +1,5 @@
+<map id="Graphical Class Hierarchy" name="Graphical Class Hierarchy">
+<area shape="rect" id="Node000000" href="$classclient__send__pacer__base.html" title="Abstract base for client send pacer. Provides a stable polymorphic interface so different templated p..." alt="" coords="5,13,183,38"/>
+<area shape="rect" id="Node000001" href="$classclient__send__pacer.html" title="Client send pacer using token bucket algorithm." alt="" coords="231,5,409,45"/>
+<area shape="poly" id="edge1_Node000000_Node000001" title=" " alt="" coords="197,23,231,23,231,28,197,28"/>
+</map>
