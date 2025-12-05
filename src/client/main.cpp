@@ -89,17 +89,24 @@ struct client_worker_context {
     std::atomic<size_t> next_socket_index{0};
 
     std::unique_ptr<TDigest> curren_rtt_tdigest;
+    // Per-worker TDigest to collect inter-packet pacing (ms)
+    std::unique_ptr<TDigest> current_pacing_tdigest;
+    // Last send timestamp (ns) used to compute inter-packet interval
+    uint64_t last_send_timestamp_ns{0};
 };
 
 std::mutex g_worker_contexts_mutex;
 std::vector<std::unique_ptr<TDigest>>
     g_worker_rtt_tdigests;  ///< Digest posted by each worker for merging.
+// Separate list for per-worker pacing TDigests
+std::vector<std::unique_ptr<TDigest>> g_worker_pacing_tdigests;
 
 // Packet rate limit total across all workers (packets per second, 0 = unlimited)
 // Each worker will be assigned an equal share (plus remainder distribution).
 uint64_t g_rate_limit = 10000;  // default total
 
 TDigest g_overall_rtt_tdigest(100.0);  ///< Global RTT TDigest for percentile estimation
+TDigest g_overall_pacing_tdigest(100.0);  ///< Global pacing TDigest (ms)
 
 /**
  * @brief Atomically update a target to the minimum of its current value and `value`.
@@ -132,6 +139,15 @@ void merge_tdigest() {
     }
     g_worker_rtt_tdigests.resize(0);
     g_overall_rtt_tdigest.compress();
+
+    // Merge pacing digests as well
+    for (auto& worker_p : g_worker_pacing_tdigests) {
+        if (worker_p) {
+            g_overall_pacing_tdigest.merge(*worker_p);
+        }
+    }
+    g_worker_pacing_tdigests.resize(0);
+    g_overall_pacing_tdigest.compress();
 }
 
 /**
@@ -165,6 +181,23 @@ void post_rtt(std::unique_ptr<TDigest>& current_digest, uint64_t rotate_threshol
             std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
             g_worker_rtt_tdigests.push_back(std::move(current_digest));
         }
+        current_digest = nullptr;
+    }
+}
+
+/**
+ * @brief Post a pacing sample (ns) to a per-worker TDigest and rotate when threshold reached.
+ */
+void post_pacing(std::unique_ptr<TDigest>& current_digest, uint64_t rotate_threshold,
+                 uint64_t pacing_ns) {
+    if (!current_digest) {
+        current_digest = std::make_unique<TDigest>(100.0);
+    }
+    current_digest->add(static_cast<double>(pacing_ns) / 1'000'000.0);  // convert to ms
+
+    if (current_digest->total_weight() >= static_cast<double>(rotate_threshold)) {
+        std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
+        g_worker_pacing_tdigests.push_back(std::move(current_digest));
         current_digest = nullptr;
     }
 }
@@ -236,6 +269,15 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
             packet_header* header = reinterpret_cast<packet_header*>(send_ctx->buffer.data());
             header->sequence_number = ctx->next_sequence.fetch_add(1);
             header->timestamp_ns = get_timestamp_ns();
+
+            // Compute inter-packet pacing interval based on last send timestamp
+            uint64_t now_ns = header->timestamp_ns;
+            if (ctx->last_send_timestamp_ns != 0) {
+                uint64_t pacing_ns = now_ns - ctx->last_send_timestamp_ns;
+                // Rotate approximately once a second based on per-worker rate
+                post_pacing(ctx->current_pacing_tdigest, ctx->per_worker_rate, pacing_ns);
+            }
+            ctx->last_send_timestamp_ns = now_ns;
 
             size_t total_size = HEADER_SIZE + payload_size;
 
@@ -346,6 +388,12 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
         g_worker_rtt_tdigests.push_back(std::move(ctx->curren_rtt_tdigest));
     }
     ctx->curren_rtt_tdigest = nullptr;
+    // Also post pacing digest
+    {
+        std::lock_guard<std::mutex> lock(g_worker_contexts_mutex);
+        g_worker_pacing_tdigests.push_back(std::move(ctx->current_pacing_tdigest));
+    }
+    ctx->current_pacing_tdigest = nullptr;
 
     if (g_verbose.load())
         std::osyncstream(std::cout) << std::format(
@@ -701,11 +749,24 @@ int main(int argc, char* argv[]) try {
     std::cout << std::format("RTT (min/avg/max): {:.2f}/{:.2f}/{:.2f} ms\n", min_rtt_ms, avg_rtt_ms,
                              max_rtt_ms);
 
-    // TDigest stores RTT samples in milliseconds, so percentiles are in ms as well.
-    std::cout << std::format(
-        "RTT Percentiles (ms): p50={:.2f} p90={:.2f} p99={:.2f} p99.9={:.2f}\n",
-        g_overall_rtt_tdigest.percentile(0.50), g_overall_rtt_tdigest.percentile(0.90),
-        g_overall_rtt_tdigest.percentile(0.99), g_overall_rtt_tdigest.percentile(0.999));
+    // TDigest stores RTT and pacing samples in milliseconds.
+    // Print RTT percentiles every 10% and the high percentiles
+    std::cout << "RTT Percentiles (ms): ";
+    for (int p = 10; p <= 90; p += 10) {
+        double q = static_cast<double>(p) / 100.0;
+        std::cout << std::format("p{}={:.2f} ", p, g_overall_rtt_tdigest.percentile(q));
+    }
+    std::cout << std::format("p99={:.2f} p99.9={:.2f}\n", g_overall_rtt_tdigest.percentile(0.99),
+                             g_overall_rtt_tdigest.percentile(0.999));
+
+    // Print Pacing percentiles every 10% and the high percentiles
+    std::cout << "Pacing Percentiles (ms): ";
+    for (int p = 10; p <= 90; p += 10) {
+        double q = static_cast<double>(p) / 100.0;
+        std::cout << std::format("p{}={:.3f} ", p, g_overall_pacing_tdigest.percentile(q));
+    }
+    std::cout << std::format("p99={:.3f} p99.9={:.3f}\n", g_overall_pacing_tdigest.percentile(0.99),
+                             g_overall_pacing_tdigest.percentile(0.999));
 
     // Optionally write final statistics to a file as JSON if requested
     if (!stats_file.empty()) {
@@ -731,14 +792,27 @@ int main(int argc, char* argv[]) try {
             ofs << std::format("  \"rtt_min_ms\": {:.2f},\n", min_rtt_ms);
             ofs << std::format("  \"rtt_avg_ms\": {:.2f},\n", avg_rtt_ms);
             ofs << std::format("  \"rtt_max_ms\": {:.2f},\n", max_rtt_ms);
-            ofs << std::format("  \"rtt_p50_ms\": {:.2f},\n",
-                               g_overall_rtt_tdigest.percentile(0.50));
-            ofs << std::format("  \"rtt_p90_ms\": {:.2f},\n",
-                               g_overall_rtt_tdigest.percentile(0.90));
+            // Emit RTT percentiles every 10%
+            for (int p = 10; p <= 90; p += 10) {
+                double q = static_cast<double>(p) / 100.0;
+                ofs << std::format("  \"rtt_p{}_ms\": {:.2f},\n", p,
+                                   g_overall_rtt_tdigest.percentile(q));
+            }
             ofs << std::format("  \"rtt_p99_ms\": {:.2f},\n",
                                g_overall_rtt_tdigest.percentile(0.99));
-            ofs << std::format("  \"rtt_p999_ms\": {:.2f}\n",
+            ofs << std::format("  \"rtt_p999_ms\": {:.2f},\n",
                                g_overall_rtt_tdigest.percentile(0.999));
+
+            // Emit pacing percentiles every 10%
+            for (int p = 10; p <= 90; p += 10) {
+                double q = static_cast<double>(p) / 100.0;
+                ofs << std::format("  \"pacing_p{}_ms\": {:.3f},\n", p,
+                                   g_overall_pacing_tdigest.percentile(q));
+            }
+            ofs << std::format("  \"pacing_p99_ms\": {:.3f},\n",
+                               g_overall_pacing_tdigest.percentile(0.99));
+            ofs << std::format("  \"pacing_p999_ms\": {:.3f}\n",
+                               g_overall_pacing_tdigest.percentile(0.999));
             ofs << "}\n";
             ofs.close();
             if (g_verbose.load()) std::cout << std::format("Wrote JSON stats to {}\n", stats_file);
