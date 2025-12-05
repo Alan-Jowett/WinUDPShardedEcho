@@ -30,9 +30,12 @@
 #include <unordered_set>
 
 #include "common/arg_parser.hpp"
+#include "common/bbr.hpp"
+#include "common/null_cc.hpp"
+#include "common/pacer.hpp"
+#include "common/reno.hpp"
 #include "common/socket_utils.hpp"
 #include "common/tdigest.hpp"
-#include "common/pacer.hpp"
 
 // Global flag for shutdown; set to true to request orderly termination.
 std::atomic<bool> g_shutdown{false};
@@ -40,6 +43,8 @@ std::atomic<bool> g_shutdown{false};
 std::atomic<bool> g_verbose{false};
 // Start signal to synchronize when workers begin sending
 std::atomic<bool> g_start_sending{false};
+// Signal to stop sending but allow processing of outstanding replies
+std::atomic<bool> g_stop_sending{false};
 
 /**
  * @brief Signal handler that requests shutdown.
@@ -96,7 +101,7 @@ struct client_worker_context {
     std::unique_ptr<TDigest> current_pacing_tdigest;
     // Last send timestamp (ns) used to compute inter-packet interval
     uint64_t last_send_timestamp_ns{0};
-    std::unique_ptr<client_send_pacer> pacer;
+    std::unique_ptr<client_send_pacer_base> pacer;
 };
 
 std::mutex g_worker_contexts_mutex;
@@ -109,7 +114,7 @@ std::vector<std::unique_ptr<TDigest>> g_worker_pacing_tdigests;
 // Each worker will be assigned an equal share (plus remainder distribution).
 uint64_t g_rate_limit = 10000;  // default total
 
-TDigest g_overall_rtt_tdigest(100.0);  ///< Global RTT TDigest for percentile estimation
+TDigest g_overall_rtt_tdigest(100.0);     ///< Global RTT TDigest for percentile estimation
 TDigest g_overall_pacing_tdigest(100.0);  ///< Global pacing TDigest (ms)
 
 /**
@@ -254,9 +259,13 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
     while (!g_start_sending.load() && !g_shutdown.load()) {
         std::this_thread::yield();
     }
- 
+
     while (!g_shutdown.load()) {
         uint64_t sent_so_far = ctx->packets_sent.load();
+        // Stop initiating new sends when ordered to stop; this allows in-flight
+        // replies to be processed and not counted as dropped.
+        if (g_stop_sending.load()) break;
+
         while (!available_send_contexts.empty() && ctx->pacer->can_send()) {
             auto* send_ctx = available_send_contexts.back();
             available_send_contexts.pop_back();
@@ -289,7 +298,10 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
             ctx->bytes_sent.fetch_add(total_size);
             sent_so_far++;
 
-            ctx->pacer->record_send();
+            // Tell pacer the actual sequence number so congestion controllers
+            // that index by sequence (e.g., bandwidth estimators) can match
+            // sends to ACKs.
+            if (ctx->pacer) ctx->pacer->record_send(header->sequence_number);
         }
 
         // Check for completions (use GetQueuedCompletionStatusEx to batch completions)
@@ -305,8 +317,8 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
         // - If wait <= BUSY_SPIN_NS, poll GQCSEx non-blocking and busy-wait (yield)
         //   until the next send time to achieve sub-ms spacing.
         // thresholds
-        constexpr uint64_t TIGHT_SPIN_NS = 200'000ULL;  // 200 us
-        constexpr uint64_t SHORT_SLEEP_NS = 2'000'000ULL; // 2 ms
+        constexpr uint64_t TIGHT_SPIN_NS = 200'000ULL;     // 200 us
+        constexpr uint64_t SHORT_SLEEP_NS = 2'000'000ULL;  // 2 ms
         DWORD timeout = 0;
         BOOL ex_result = FALSE;
 
@@ -314,23 +326,24 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
             // can send now: non-blocking poll
             timeout = 0;
             ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
-                                                   &num_removed, timeout, FALSE);
+                                                    &num_removed, timeout, FALSE);
         } else if (wait_ns > SHORT_SLEEP_NS) {
             // longer waits: block in kernel for up to IOCP_TIMEOUT_MS
             uint64_t wait_ms = (wait_ns + 999999ULL) / 1000000ULL;
-            timeout = static_cast<DWORD>((std::min)(static_cast<uint64_t>(IOCP_TIMEOUT_MS), wait_ms));
+            timeout =
+                static_cast<DWORD>((std::min)(static_cast<uint64_t>(IOCP_TIMEOUT_MS), wait_ms));
             ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
-                                                   &num_removed, timeout, FALSE);
+                                                    &num_removed, timeout, FALSE);
         } else if (wait_ns > TIGHT_SPIN_NS) {
             // moderate short wait: do a quick non-blocking poll then Sleep(0) until target
             timeout = 0;
             ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
-                                                   &num_removed, timeout, FALSE);
+                                                    &num_removed, timeout, FALSE);
             if (num_removed == 0) {
-                uint64_t now = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch())
-                        .count());
+                uint64_t now =
+                    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                              std::chrono::steady_clock::now().time_since_epoch())
+                                              .count());
                 uint64_t target = now + wait_ns;
                 while (!g_shutdown.load()) {
                     now = static_cast<uint64_t>(
@@ -345,12 +358,12 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
             // very short wait: non-blocking poll and tight yield-based spin
             timeout = 0;
             ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
-                                                   &num_removed, timeout, FALSE);
+                                                    &num_removed, timeout, FALSE);
             if (num_removed == 0) {
-                uint64_t now = static_cast<uint64_t>(
-                    std::chrono::duration_cast<std::chrono::nanoseconds>(
-                        std::chrono::steady_clock::now().time_since_epoch())
-                        .count());
+                uint64_t now =
+                    static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::nanoseconds>(
+                                              std::chrono::steady_clock::now().time_since_epoch())
+                                              .count());
                 uint64_t target = now + wait_ns;
                 while (!g_shutdown.load()) {
                     now = static_cast<uint64_t>(
@@ -410,6 +423,9 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
                     // Rotate approximately once a second based on rate.
                     post_rtt(ctx->curren_rtt_tdigest, ctx->per_worker_rate, rtt);
                     ctx->outstanding_sequences.erase(header->sequence_number);
+                    // Feed acknowledgement into pacer congestion controller so it can
+                    // update bandwidth/RTT estimates. Provide sequence number from header.
+                    if (ctx->pacer) ctx->pacer->on_ack(recv_time, header->sequence_number, rtt);
                 }
 
                 // Re-post receive on the socket that completed
@@ -483,6 +499,8 @@ int main(int argc, char* argv[]) try {
     parser.add_option("duration", 'd', "10", true, "Test duration in seconds (default: 10)");
     parser.add_option("rate", 'r', "10000", true,
                       "Total packet rate limit (packets/sec, 0=unlimited)");
+    parser.add_option("cc", 'C', "null", true,
+                      "Congestion controller to use: null|bbr|reno (default: null)");
     parser.add_option("recvbuf", 'b', "4194304", true,
                       "Socket receive buffer size in bytes (default: 4194304)");
     parser.add_option("sockets", 'k', "16", true, "Number of sockets per worker (default: 16)");
@@ -504,6 +522,7 @@ int main(int argc, char* argv[]) try {
     const std::string rate_str = parser.get("rate");
     const std::string recvbuf_str = parser.get("recvbuf");
     const std::string sockets_str = parser.get("sockets");
+    const std::string cc_choice = parser.get("cc");
     const std::string stats_file = parser.get("stats-file");
     const std::string verbose_str = parser.get("verbose");
     size_t payload_size = 0;
@@ -561,6 +580,22 @@ int main(int argc, char* argv[]) try {
     std::cout << std::format("Duration: {} seconds\n", duration_sec);
     std::cout << std::format("Rate limit: {} packets/sec total ({} per worker)\n", g_rate_limit,
                              per_worker_display);
+    std::cout << std::format("Congestion controller: {}\n", cc_choice.empty() ? "null" : cc_choice);
+
+    // Validate congestion controller choice
+    const std::vector<std::string> valid_cc = {"null", "bbr", "reno"};
+    if (!cc_choice.empty()) {
+        bool ok = false;
+        if (std::any_of(valid_cc.begin(), valid_cc.end(),
+                        [&](const auto& v) { return v == cc_choice; })) {
+            ok = true;
+        }
+        if (!ok) {
+            std::cerr << std::format("Unknown congestion controller: {}\n", cc_choice);
+            std::cerr << "Valid options: null|bbr|reno\n";
+            return 1;
+        }
+    }
 
     // Initialize Winsock
     initialize_winsock();
@@ -704,7 +739,17 @@ int main(int argc, char* argv[]) try {
     // Start worker threads
     for (auto& ctx : workers) {
         // create per-worker pacer now so it doesn't accumulate tokens before start
-        ctx->pacer = std::make_unique<client_send_pacer>(static_cast<double>(ctx->per_worker_rate));
+        if (cc_choice == "bbr") {
+            ctx->pacer = std::make_unique<client_send_pacer<bbr_congestion_controller>>(
+                static_cast<double>(ctx->per_worker_rate));
+        } else if (cc_choice == "reno") {
+            ctx->pacer = std::make_unique<client_send_pacer<reno_congestion_controller>>(
+                static_cast<double>(ctx->per_worker_rate));
+        } else {
+            // default: null controller (allow requested rate)
+            ctx->pacer =
+                std::make_unique<client_send_pacer<>>(static_cast<double>(ctx->per_worker_rate));
+        }
         ctx->worker_thread = std::thread(worker_thread_func, ctx.get(), payload_size);
     }
 
@@ -742,6 +787,12 @@ int main(int argc, char* argv[]) try {
                                  total_recv, total_sent - total_recv);
     }
 
+    // Signal workers to stop sending new packets, allow in-flight replies to arrive
+    g_stop_sending.store(true);
+    // Wait 1 second for in-flight replies to be processed
+    std::this_thread::sleep_for(std::chrono::seconds(1));
+
+    // Now request shutdown to terminate worker loops
     g_shutdown.store(true);
     std::cout << "\nStopping workers...\n";
 

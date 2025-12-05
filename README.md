@@ -198,3 +198,44 @@ Choose based on your workload and goals:
 Recommendation: keep the default overlapped IO for production and high-throughput testing. Use
 `--sync-reply` for small experiments, micro-benchmarks, or when you explicitly want the simpler
 blocking send path for diagnosis.
+
+## Congestion Control (client)
+
+The client supports selectable congestion-control policies via the `--cc` option.
+
+- `--cc null` (default): No congestion controller — the client will attempt to send at the
+   exact rate specified by `--rate` (subject to OS and NIC limits).
+- `--cc bbr`: A lightweight BBR-style controller that estimates bandwidth and minimum RTT and
+   adjusts a target pacing rate to achieve high throughput while attempting to avoid excessive RTT
+   inflation. This is experimental and provided for evaluation.
+
+- `--cc reno`: A simple Reno-like controller (window-based). It maintains a congestion window
+   in packets and computes a pacing rate as cwnd / min_rtt. This is an experimental, classic
+   TCP-style controller provided for comparison.
+
+Example:
+
+```bash
+echo_client --server 127.0.0.1 --port 5000 --rate 100000 --cc bbr --duration 30
+```
+
+The available controllers are also listed in the client's `--help` output.
+
+## Developer Notes: Documentation and Doxygen
+
+- The congestion controller implementations live under `src/common` and are
+   documented with Doxygen-style comments to aid automated API documentation.
+   Key files:
+   - `src/common/null_cc.hpp` - no-op controller (placeholder / tests)
+   - `src/common/bbr.hpp` - lightweight BBR-like experimental controller
+   - `src/common/reno.hpp` - simple Reno-like windowed controller
+
+- To generate HTML documentation with Doxygen (if you have Doxygen installed):
+
+```powershell
+doxygen Doxyfile
+```
+
+- The Doxygen comments are intentionally concise; please open the header
+   files in `src/common` for per-method and member documentation used by the
+   generated docs.

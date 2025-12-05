@@ -182,8 +182,6 @@ class ArgParser {
             std::cout << "  ";
             std::cout << "Default:";
             // pad so that defaults align in a column
-            size_t after_default = 0;  // length of label "Default:"
-            after_default = 8;
             std::cout << " ";
             if (r.default_val.size() < def_col_width)
                 std::cout << std::string(def_col_width - r.default_val.size(), ' ');
@@ -193,6 +191,8 @@ class ArgParser {
             }
             std::cout << "\n";
         }
+        // Add custom help note for congestion controllers available
+        std::cout << "\nAvailable congestion controllers: null, bbr, reno\n";
     }
 
     /**
