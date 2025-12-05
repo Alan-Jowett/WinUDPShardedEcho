@@ -32,11 +32,14 @@
 #include "common/arg_parser.hpp"
 #include "common/socket_utils.hpp"
 #include "common/tdigest.hpp"
+#include "common/pacer.hpp"
 
 // Global flag for shutdown; set to true to request orderly termination.
 std::atomic<bool> g_shutdown{false};
 // Global verbose flag; when true, additional runtime information is logged.
 std::atomic<bool> g_verbose{false};
+// Start signal to synchronize when workers begin sending
+std::atomic<bool> g_start_sending{false};
 
 /**
  * @brief Signal handler that requests shutdown.
@@ -93,6 +96,7 @@ struct client_worker_context {
     std::unique_ptr<TDigest> current_pacing_tdigest;
     // Last send timestamp (ns) used to compute inter-packet interval
     uint64_t last_send_timestamp_ns{0};
+    std::unique_ptr<client_send_pacer> pacer;
 };
 
 std::mutex g_worker_contexts_mutex;
@@ -246,22 +250,14 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
     if (g_verbose.load())
         std::osyncstream(std::cout) << std::format("[CPU {}] Worker started\n", ctx->processor_id);
 
-    // Rate limiting: each worker maintains a quota = elapsed_time * per_worker_rate
-    auto start_time = std::chrono::steady_clock::now();
-
+    // Wait for global start signal before sending so measurements align
+    while (!g_start_sending.load() && !g_shutdown.load()) {
+        std::this_thread::yield();
+    }
+ 
     while (!g_shutdown.load()) {
-        // Try to send new packets up to quota (quota = elapsed_seconds * g_rate_limit)
-        auto now = std::chrono::steady_clock::now();
-        double elapsed_s =
-            std::chrono::duration_cast<std::chrono::duration<double>>(now - start_time).count();
-        uint64_t allowed =
-            ctx->per_worker_rate == 0
-                ? UINT64_MAX
-                : static_cast<uint64_t>(elapsed_s * static_cast<double>(ctx->per_worker_rate));
-
         uint64_t sent_so_far = ctx->packets_sent.load();
-        while (!available_send_contexts.empty() &&
-               (ctx->per_worker_rate == 0 || sent_so_far < allowed)) {
+        while (!available_send_contexts.empty() && ctx->pacer->can_send()) {
             auto* send_ctx = available_send_contexts.back();
             available_send_contexts.pop_back();
 
@@ -293,15 +289,7 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
             ctx->bytes_sent.fetch_add(total_size);
             sent_so_far++;
 
-            // recompute allowed in case per-worker rate changed dynamically
-            if (ctx->per_worker_rate != 0) {
-                now = std::chrono::steady_clock::now();
-                elapsed_s =
-                    std::chrono::duration_cast<std::chrono::duration<double>>(now - start_time)
-                        .count();
-                allowed =
-                    static_cast<uint64_t>(elapsed_s * static_cast<double>(ctx->per_worker_rate));
-            }
+            ctx->pacer->record_send();
         }
 
         // Check for completions (use GetQueuedCompletionStatusEx to batch completions)
@@ -309,8 +297,71 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
         std::vector<OVERLAPPED_ENTRY> entries(max_entries);
         ULONG num_removed = 0;
 
-        BOOL ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
-                                                     &num_removed, IOCP_TIMEOUT_MS, FALSE);
+        uint64_t wait_ns = ctx->pacer->get_next_send_time_ns();
+        // Hybrid waiting strategy:
+        // - If wait > BUSY_SPIN_NS, block in kernel with GetQueuedCompletionStatusEx
+        //   using a timeout slightly smaller than the requested wait to avoid
+        //   oversleep due to scheduler granularity.
+        // - If wait <= BUSY_SPIN_NS, poll GQCSEx non-blocking and busy-wait (yield)
+        //   until the next send time to achieve sub-ms spacing.
+        // thresholds
+        constexpr uint64_t TIGHT_SPIN_NS = 200'000ULL;  // 200 us
+        constexpr uint64_t SHORT_SLEEP_NS = 2'000'000ULL; // 2 ms
+        DWORD timeout = 0;
+        BOOL ex_result = FALSE;
+
+        if (wait_ns == 0) {
+            // can send now: non-blocking poll
+            timeout = 0;
+            ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
+                                                   &num_removed, timeout, FALSE);
+        } else if (wait_ns > SHORT_SLEEP_NS) {
+            // longer waits: block in kernel for up to IOCP_TIMEOUT_MS
+            uint64_t wait_ms = (wait_ns + 999999ULL) / 1000000ULL;
+            timeout = static_cast<DWORD>((std::min)(static_cast<uint64_t>(IOCP_TIMEOUT_MS), wait_ms));
+            ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
+                                                   &num_removed, timeout, FALSE);
+        } else if (wait_ns > TIGHT_SPIN_NS) {
+            // moderate short wait: do a quick non-blocking poll then Sleep(0) until target
+            timeout = 0;
+            ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
+                                                   &num_removed, timeout, FALSE);
+            if (num_removed == 0) {
+                uint64_t now = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count());
+                uint64_t target = now + wait_ns;
+                while (!g_shutdown.load()) {
+                    now = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count());
+                    if (now >= target) break;
+                    Sleep(0);
+                }
+            }
+        } else {
+            // very short wait: non-blocking poll and tight yield-based spin
+            timeout = 0;
+            ex_result = GetQueuedCompletionStatusEx(ctx->iocp.get(), entries.data(), max_entries,
+                                                   &num_removed, timeout, FALSE);
+            if (num_removed == 0) {
+                uint64_t now = static_cast<uint64_t>(
+                    std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now().time_since_epoch())
+                        .count());
+                uint64_t target = now + wait_ns;
+                while (!g_shutdown.load()) {
+                    now = static_cast<uint64_t>(
+                        std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now().time_since_epoch())
+                            .count());
+                    if (now >= target) break;
+                    std::this_thread::yield();
+                }
+            }
+        }
 
         if (!ex_result) {
             DWORD error = GetLastError();
@@ -328,6 +379,7 @@ void worker_thread_func(client_worker_context* ctx, size_t payload_size) try {
             // On other errors just continue the loop
             continue;
         }
+        ctx->pacer->poll();
 
         if (num_removed == 0) {
             continue;
@@ -651,8 +703,18 @@ int main(int argc, char* argv[]) try {
 
     // Start worker threads
     for (auto& ctx : workers) {
+        // create per-worker pacer now so it doesn't accumulate tokens before start
+        ctx->pacer = std::make_unique<client_send_pacer>(static_cast<double>(ctx->per_worker_rate));
         ctx->worker_thread = std::thread(worker_thread_func, ctx.get(), payload_size);
     }
+
+    // All workers are started; signal them to begin sending
+    g_start_sending.store(true);
+    // Reset pacers so they start refilling at the same epoch (align measurement)
+    for (const auto& ctx : workers) {
+        if (ctx->pacer) ctx->pacer->reset_to_now();
+    }
+    // Now mark the measurement start time
 
     if (g_verbose.load())
         std::cout << std::format("\nClient running for {} seconds. Press Ctrl+C to stop early.\n\n",
@@ -660,11 +722,13 @@ int main(int argc, char* argv[]) try {
 
     // Run for specified duration
     auto start_time = std::chrono::steady_clock::now();
+    std::chrono::steady_clock::time_point end_time;
     while (!g_shutdown.load()) {
         std::this_thread::sleep_for(std::chrono::seconds(1));
 
         auto elapsed = std::chrono::steady_clock::now() - start_time;
         if (std::chrono::duration_cast<std::chrono::seconds>(elapsed).count() >= duration_sec) {
+            end_time = std::chrono::steady_clock::now();
             break;
         }
 
@@ -730,7 +794,9 @@ int main(int argc, char* argv[]) try {
     double min_rtt_ms = min_rtt != UINT64_MAX ? static_cast<double>(min_rtt) / 1'000'000.0 : 0.0;
     double max_rtt_ms = static_cast<double>(max_rtt) / 1'000'000.0;
 
-    auto actual_duration = std::chrono::steady_clock::now() - start_time;
+    auto actual_duration = (end_time == std::chrono::steady_clock::time_point())
+                               ? (std::chrono::steady_clock::now() - start_time)
+                               : (end_time - start_time);
     double duration_s =
         std::chrono::duration_cast<std::chrono::milliseconds>(actual_duration).count() / 1000.0;
     double pps_sent = total_sent / duration_s;
