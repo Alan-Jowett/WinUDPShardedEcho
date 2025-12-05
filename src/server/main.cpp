@@ -36,10 +36,6 @@ std::atomic<bool> g_shutdown{false};
 std::atomic<bool> g_verbose{false};
 // If true, reply synchronously via `sendto` instead of posting overlapped sends.
 std::atomic<bool> g_sync_reply{false};
-// If true, use RIO mode instead of IOCP.
-std::atomic<bool> g_use_rio{false};
-// If true, use RIO poll mode instead of event notification.
-std::atomic<bool> g_rio_poll_mode{false};
 
 /**
  * @brief Signal handler that requests shutdown.
@@ -61,38 +57,6 @@ struct server_worker_context {
     unique_socket socket;
     /// IO Completion Port associated with the socket.
     unique_iocp iocp;
-    /// Worker thread (jthread for cooperative cancellation support).
-    std::jthread worker_thread;
-    /// Counters and statistics.
-    std::atomic<uint64_t> packets_received{0};
-    std::atomic<uint64_t> packets_sent{0};
-    std::atomic<uint64_t> bytes_received{0};
-    std::atomic<uint64_t> bytes_sent{0};
-};
-
-/**
- * @brief Per-worker context for RIO-based server processing.
- *
- * Holds the listening socket, RIO function table, completion queue,
- * request queue, and statistics.
- */
-struct server_rio_worker_context {
-    /// Logical processor id this worker is affinitized to.
-    uint32_t processor_id;
-    /// Configured outstanding RIO ops and queue sizes.
-    size_t outstanding_ops{RIO_OUTSTANDING_OPS};
-    size_t completion_queue_size{RIO_CQ_SIZE};
-    size_t request_queue_size{RIO_RQ_SIZE};
-    /// The UDP socket owned by the worker.
-    unique_socket socket;
-    /// Notification event for RIO completion queue.
-    unique_event notification_event;
-    /// RIO function table.
-    RIO_EXTENSION_FUNCTION_TABLE rio;
-    /// RIO completion queue (RAII wrapper).
-    unique_rio_cq completion_queue;
-    /// RIO request queue (RAII wrapper).
-    unique_rio_rq request_queue;
     /// Worker thread (jthread for cooperative cancellation support).
     std::jthread worker_thread;
     /// Counters and statistics.
@@ -272,195 +236,9 @@ void worker_thread_func(server_worker_context* ctx) try {
 }
 
 /**
- * @brief RIO worker thread entrypoint for the server.
- *
- * Pins the thread, registers buffers, posts initial receives, and loops
- * processing RIO completions for receives and sends. Received datagrams
- * are echoed back to the sender in this example.
- */
-void worker_thread_func_rio(server_rio_worker_context* ctx) try {
-    // Set thread affinity to match socket affinity
-    set_thread_affinity(ctx->processor_id);
-
-    // Allocate and register receive contexts
-    std::vector<std::unique_ptr<rio_context>> recv_contexts;
-    for (size_t i = 0; i < ctx->outstanding_ops; ++i) {
-        auto rio_ctx = std::make_unique<rio_context>();
-        rio_ctx->buffer_id = register_rio_buffer(ctx->rio, rio_ctx->buffer.data(),
-                                                 static_cast<DWORD>(rio_ctx->buffer.size()));
-        rio_ctx->addr_buffer_id = register_rio_buffer(
-            ctx->rio, &rio_ctx->remote_addr, static_cast<DWORD>(sizeof(rio_ctx->remote_addr)));
-        recv_contexts.push_back(std::move(rio_ctx));
-    }
-
-    // Pool of send contexts
-    std::vector<std::unique_ptr<rio_context>> send_contexts;
-    for (size_t i = 0; i < ctx->outstanding_ops; ++i) {
-        auto rio_ctx = std::make_unique<rio_context>();
-        rio_ctx->buffer_id = register_rio_buffer(ctx->rio, rio_ctx->buffer.data(),
-                                                 static_cast<DWORD>(rio_ctx->buffer.size()));
-        rio_ctx->addr_buffer_id = register_rio_buffer(
-            ctx->rio, &rio_ctx->remote_addr, static_cast<DWORD>(sizeof(rio_ctx->remote_addr)));
-        send_contexts.push_back(std::move(rio_ctx));
-    }
-    std::vector<rio_context*> available_send_contexts;
-    std::transform(send_contexts.begin(), send_contexts.end(),
-                   std::back_inserter(available_send_contexts),
-                   [](const std::unique_ptr<rio_context>& ptr) { return ptr.get(); });
-
-    // Post initial receive operations in batch
-    {
-        std::vector<rio_context*> initial_recvs;
-        initial_recvs.reserve(recv_contexts.size());
-        std::transform(recv_contexts.begin(), recv_contexts.end(),
-                       std::back_inserter(initial_recvs),
-                       [](const std::unique_ptr<rio_context>& ptr) { return ptr.get(); });
-        post_rio_recv(ctx->rio, ctx->request_queue.get(), initial_recvs);
-    }
-
-    if (g_verbose.load())
-        std::osyncstream(std::cout)
-            << std::format("[CPU {}] RIO Worker started, {} outstanding receives\n",
-                           ctx->processor_id, ctx->outstanding_ops);
-
-    // Completion results array
-    RIORESULT results[RIO_MAX_RESULTS];
-    std::vector<rio_context*> recv_repost;
-    std::vector<std::pair<rio_context*, DWORD>> send_batch;
-    recv_repost.reserve(RIO_MAX_RESULTS);
-    send_batch.reserve(RIO_MAX_RESULTS);
-
-    while (!g_shutdown.load()) {
-        // Continuously dequeue all available completions in a tight loop
-        ULONG num_results =
-            ctx->rio.RIODequeueCompletion(ctx->completion_queue.get(), results, RIO_MAX_RESULTS);
-
-        if (num_results == RIO_CORRUPT_CQ) {
-            throw std::runtime_error(
-                std::format("[CPU {}] RIO completion queue corrupted\n", ctx->processor_id));
-        }
-
-        if (num_results == 0) {
-            if (g_rio_poll_mode.load()) {
-                // In poll mode, simply continue looping
-                std::this_thread::yield();
-                continue;
-            }
-            else {
-            WaitForSingleObject(ctx->notification_event.get(), 10);
-            continue;
-            }
-        }
-
-        // Process all completions in this batch
-        do {
-            // Collect sends and receives to batch-submit them
-            recv_repost.clear();
-            send_batch.clear();
-
-            // Process all completions in this batch
-            for (ULONG i = 0; i < num_results; ++i) {
-                const RIORESULT& result = results[i];
-                auto* rio_ctx =
-                    static_cast<rio_context*>(reinterpret_cast<void*>(result.RequestContext));
-
-                if (rio_ctx->operation == io_operation_type::recv) {
-                    DWORD bytes_transferred = result.BytesTransferred;
-
-                    // Update basic receive counters
-                    ctx->packets_received.fetch_add(1);
-                    ctx->bytes_received.fetch_add(bytes_transferred);
-
-                    if (bytes_transferred > 0) {
-                        if (g_sync_reply.load()) {
-                            try {
-                                int sent = send_sync(
-                                    ctx->socket, rio_ctx->buffer.data(), bytes_transferred,
-                                    reinterpret_cast<sockaddr*>(&rio_ctx->remote_addr),
-                                    rio_ctx->remote_addr_len);
-                                ctx->packets_sent.fetch_add(1);
-                                ctx->bytes_sent.fetch_add(sent);
-                            } catch (const std::exception& ex) {
-                                std::osyncstream(std::cerr)
-                                    << std::format("[CPU {}] sync send failed: {}\n",
-                                                   ctx->processor_id, ex.what());
-                            }
-                            // Re-post receive and continue
-                            recv_repost.push_back(rio_ctx);
-                            continue;
-                        }
-
-                        // Acquire a send context from the pool
-                        rio_context* send_ctx = nullptr;
-                        if (!available_send_contexts.empty()) {
-                            send_ctx = available_send_contexts.back();
-                            available_send_contexts.pop_back();
-                        } else {
-                            std::osyncstream(std::cerr) << std::format(
-                                "[CPU {}] No available RIO send context\n", ctx->processor_id);
-                            // Re-post receive and continue
-                            recv_repost.emplace_back(rio_ctx);
-                            continue;
-                        }
-
-                        // Echo the packet back
-                        std::memcpy(send_ctx->buffer.data(), rio_ctx->buffer.data(),
-                                    bytes_transferred);
-                        std::memcpy(&send_ctx->remote_addr, &rio_ctx->remote_addr,
-                                    sizeof(rio_ctx->remote_addr));
-                        send_ctx->remote_addr_len = rio_ctx->remote_addr_len;
-
-                        send_batch.emplace_back(send_ctx, bytes_transferred);
-                        ctx->packets_sent.fetch_add(1);
-                        ctx->bytes_sent.fetch_add(bytes_transferred);
-                    }
-
-                    // Re-post receive for continuous processing
-                    recv_repost.push_back(rio_ctx);
-                } else {
-                    // Send completed — return context to pool
-                    available_send_contexts.emplace_back(rio_ctx);
-                }
-            }
-
-            // Batch-submit all collected sends and receives
-            if (!send_batch.empty()) {
-                post_rio_send(ctx->rio, ctx->request_queue.get(), send_batch);
-            }
-            if (!recv_repost.empty()) {
-                post_rio_recv(ctx->rio, ctx->request_queue.get(), recv_repost);
-            }
-
-            // Try to dequeue more completions immediately
-            num_results = ctx->rio.RIODequeueCompletion(ctx->completion_queue.get(), results,
-                                                        RIO_MAX_RESULTS);
-        } while (num_results > 0);
-    }
-
-    // RAII wrappers automatically clean up buffers and queues
-
-    if (g_verbose.load())
-        std::osyncstream(std::cout) << std::format(
-            "[CPU {}] RIO Worker shutting down. Stats: recv={}, sent={}, "
-            "bytes_recv={}, bytes_sent={}\n",
-            ctx->processor_id, ctx->packets_received.load(), ctx->packets_sent.load(),
-            ctx->bytes_received.load(), ctx->bytes_sent.load());
-} catch (const std::exception& ex) {
-    std::osyncstream(std::cerr) << std::format("[CPU {}] RIO Worker thread exception: {}\n",
-                                               ctx->processor_id, ex.what());
-    // Shutdown on unhandled exception
-    g_shutdown.store(true);
-} catch (...) {
-    std::osyncstream(std::cerr) << std::format("[CPU {}] RIO Worker thread unknown exception\n",
-                                               ctx->processor_id);
-    // Shutdown on unhandled exception
-    g_shutdown.store(true);
-}
-
-/**
  * @brief Common template for RPS printer thread.
  *
- * @tparam WorkerType IOCP or RIO worker context type
+ * @tparam WorkerType IOCP worker context type
  */
 template <typename WorkerType>
 std::thread create_rps_thread(const std::vector<std::unique_ptr<WorkerType>>& workers) {
@@ -486,7 +264,7 @@ std::thread create_rps_thread(const std::vector<std::unique_ptr<WorkerType>>& wo
 /**
  * @brief Common template for printing final stats.
  *
- * @tparam WorkerType IOCP or RIO worker context type
+ * @tparam WorkerType IOCP worker context type
  */
 template <typename WorkerType>
 void print_final_stats(const std::vector<std::unique_ptr<WorkerType>>& workers) {
@@ -508,7 +286,7 @@ void print_final_stats(const std::vector<std::unique_ptr<WorkerType>>& workers) 
 /**
  * @brief Common template for joining and cleanup of worker threads.
  *
- * @tparam WorkerType IOCP or RIO worker context type
+ * @tparam WorkerType IOCP worker context type
  */
 template <typename WorkerType>
 void cleanup_workers(std::vector<std::unique_ptr<WorkerType>>& workers) {
@@ -542,14 +320,11 @@ int main(int argc, char* argv[]) try {
     parser.add_option("port", 'p', "7", true, " UDP port to listen on (default: 7)");
     parser.add_option("duration", 'd', "0", true, "Run for N seconds then exit (0 = unlimited)");
     parser.add_option("cores", 'c', "0", true, "Number of cores to use (default: all available)");
-    parser.add_option("recvbuf", 'b', "4194304", true, "Socket receive buffer size in bytes (default: 4194304 = 4MB)");
-    parser.add_option("rio-outstanding", 0, std::to_string(RIO_OUTSTANDING_OPS).c_str(), true, "RIO outstanding ops per socket (default: 128)");
-    parser.add_option("rio-cq-size", 0, std::to_string(RIO_CQ_SIZE).c_str(), true, "RIO completion queue size (default: 2048)");
-    parser.add_option("rio-rq-size", 0, std::to_string(RIO_RQ_SIZE).c_str(), true, "RIO request queue size (default: 2048)");
-    parser.add_option("sync-reply", 's', "0", false, "Reply synchronously using sendto (default: async IO)");
-    parser.add_option("use-rio", 'r', "0", false, "Use Registered I/O (RIO) mode instead of IOCP (default: IOCP)");
+    parser.add_option("recvbuf", 'b', "4194304", true,
+                      "Socket receive buffer size in bytes (default: 4194304 = 4MB)");
+    parser.add_option("sync-reply", 's', "0", false,
+                      "Reply synchronously using sendto (default: async IO)");
     parser.add_option("help", 'h', "0", false, "Show this help");
-    parser.add_option("rio-poll-mode", 0, "0", false, "Use RIO poll mode instead of event notification (default: disabled)");
     parser.parse(argc, argv);
 
     if (parser.is_set("help")) {
@@ -560,25 +335,14 @@ int main(int argc, char* argv[]) try {
     const std::string port_str = parser.get("port");
     const std::string cores_str = parser.get("cores");
     const std::string recvbuf_str = parser.get("recvbuf");
-    const std::string rio_outstanding_str = parser.get("rio-outstanding");
-    const std::string rio_cq_size_str = parser.get("rio-cq-size");
-    const std::string rio_rq_size_str = parser.get("rio-rq-size");
     const std::string duration_str = parser.get("duration");
     const std::string verbose_str = parser.get("verbose");
     const std::string sync_reply_str = parser.get("sync-reply");
-    const std::string use_rio_str = parser.get("use-rio");
-    const std::string rio_poll_mode_str = parser.get("rio-poll-mode");
     if (!verbose_str.empty() && verbose_str != "0") {
         g_verbose.store(true);
     }
     if (!sync_reply_str.empty() && sync_reply_str != "0") {
         g_sync_reply.store(true);
-    }
-    if (!use_rio_str.empty() && use_rio_str != "0") {
-        g_use_rio.store(true);
-    }
-    if (!rio_poll_mode_str.empty() && rio_poll_mode_str != "0") {
-        g_rio_poll_mode.store(true);
     }
     if (port_str.empty()) {
         throw std::invalid_argument("Port number is required");
@@ -607,25 +371,6 @@ int main(int argc, char* argv[]) try {
         if (v > 0) recvbuf = static_cast<int>(v);
     }
 
-    // Parse RIO configuration
-    size_t rio_outstanding_ops = RIO_OUTSTANDING_OPS;
-    if (!rio_outstanding_str.empty()) {
-        long long v = std::strtoll(rio_outstanding_str.c_str(), nullptr, 10);
-        if (v > 0) rio_outstanding_ops = static_cast<size_t>(v);
-    }
-
-    size_t rio_cq_size = RIO_CQ_SIZE;
-    if (!rio_cq_size_str.empty()) {
-        long long v = std::strtoll(rio_cq_size_str.c_str(), nullptr, 10);
-        if (v > 0) rio_cq_size = static_cast<size_t>(v);
-    }
-
-    size_t rio_rq_size = RIO_RQ_SIZE;
-    if (!rio_rq_size_str.empty()) {
-        long long v = std::strtoll(rio_rq_size_str.c_str(), nullptr, 10);
-        if (v > 0) rio_rq_size = static_cast<size_t>(v);
-    }
-
     // Parse optional duration (seconds)
     int duration_sec = 0;
     if (!duration_str.empty()) {
@@ -637,14 +382,6 @@ int main(int argc, char* argv[]) try {
     std::cout << std::format("Port: {}\n", port);
     std::cout << std::format("Available processors: {}\n", num_processors);
     std::cout << std::format("Using {} worker(s)\n", num_workers);
-    std::cout << std::format("IO Mode: {}\n", g_use_rio.load() ? "RIO" : "IOCP");
-    if (g_use_rio.load()) {
-        std::cout << std::format("RIO outstanding ops: {}\n", rio_outstanding_ops);
-        std::cout << std::format("RIO CQ size: {}\n", rio_cq_size);
-        std::cout << std::format("RIO RQ size: {}\n", rio_rq_size);
-        std::cout << std::format("RIO Poll Mode: {}\n",
-                                      g_rio_poll_mode.load() ? "Enabled" : "Disabled");
-    }
 
     // Initialize Winsock
     initialize_winsock();
@@ -653,116 +390,6 @@ int main(int argc, char* argv[]) try {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Create worker contexts based on IO mode
-    if (g_use_rio.load()) {
-        // RIO mode
-        std::vector<std::unique_ptr<server_rio_worker_context>> rio_workers;
-
-        // Helper to create and initialize a single RIO worker context for a given CPU id.
-        auto create_rio_worker =
-            [&](uint32_t cpu_id, int address_family) -> std::unique_ptr<server_rio_worker_context> {
-            auto ctx = std::make_unique<server_rio_worker_context>();
-            ctx->processor_id = cpu_id;
-            ctx->outstanding_ops = rio_outstanding_ops;
-            ctx->completion_queue_size = rio_cq_size;
-            ctx->request_queue_size = rio_rq_size;
-            HANDLE event_handle = CreateEventW(nullptr, FALSE, FALSE, nullptr);
-            if (!event_handle || event_handle == INVALID_HANDLE_VALUE) {
-                throw socket_exception(
-                    std::format("CreateEventW failed: {}", get_last_error_message()));
-            }
-
-            ctx->notification_event.reset(event_handle);
-
-            ctx->socket = create_udp_socket(address_family, true);  // true = use RIO
-
-            // Load RIO function table
-            ctx->rio = load_rio_function_table(ctx->socket);
-
-            set_socket_cpu_affinity(ctx->socket, static_cast<uint16_t>(cpu_id));
-
-            // Increase socket buffers.
-            set_socket_option(ctx->socket, SOL_SOCKET, SO_RCVBUF,
-                              reinterpret_cast<const char*>(&recvbuf), sizeof(recvbuf));
-            set_socket_option(ctx->socket, SOL_SOCKET, SO_SNDBUF,
-                              reinterpret_cast<const char*>(&recvbuf), sizeof(recvbuf));
-
-            // Bind socket to the requested port
-            bind_socket(ctx->socket, static_cast<uint16_t>(port), address_family);
-
-            // Create RIO completion queue in polling mode (IOCP doesn't work with UDP)
-            std::optional<unique_event> notification_event_opt = std::nullopt;
-            if (!g_rio_poll_mode.load()) {
-                notification_event_opt = std::move(ctx->notification_event);
-            }
-            ctx->completion_queue = create_rio_completion_queue(
-                ctx->rio, static_cast<DWORD>(ctx->completion_queue_size),
-                notification_event_opt);
-            if (!ctx->completion_queue) {
-                throw socket_exception(std::format("RIOCreateCompletionQueue failed (CPU {}): {}",
-                                                   cpu_id, get_last_error_message()));
-            }
-
-            // Create RIO request queue
-            ctx->request_queue = create_rio_request_queue(
-                ctx->rio, ctx->socket, ctx->completion_queue,
-                static_cast<DWORD>(ctx->outstanding_ops), static_cast<DWORD>(ctx->outstanding_ops));
-
-            if (g_verbose.load())
-                std::osyncstream(std::cout)
-                    << std::format("Created RIO socket and queues for CPU {}\n", cpu_id);
-            return ctx;
-        };
-
-        for (uint32_t i = 0; i < num_workers; ++i) {
-            // Start one worker per address family per CPU
-            rio_workers.push_back(create_rio_worker(i, AF_INET));
-            rio_workers.push_back(create_rio_worker(i, AF_INET6));
-        }
-
-        if (rio_workers.empty()) {
-            throw std::runtime_error("No RIO worker contexts created");
-        }
-
-        // Start RIO worker threads
-        for (auto& ctx : rio_workers) {
-            ctx->worker_thread = std::jthread(worker_thread_func_rio, ctx.get());
-        }
-
-        std::osyncstream(std::cout) << std::format(
-            "\nServer running on port {} (RIO mode). Press Ctrl+C to stop.\n\n", port);
-
-        // RPS printer thread
-        std::thread rps_thread = create_rps_thread(rio_workers);
-
-        // Optional timed shutdown
-        std::thread duration_thread;
-        if (duration_sec > 0) {
-            duration_thread = std::thread([duration_sec]() {
-                std::this_thread::sleep_for(std::chrono::seconds(duration_sec));
-                g_shutdown.store(true);
-            });
-        }
-
-        // Wait for shutdown signal
-        while (!g_shutdown.load()) {
-            std::this_thread::sleep_for(std::chrono::seconds(1));
-        }
-
-        if (rps_thread.joinable()) rps_thread.join();
-        if (duration_thread.joinable()) duration_thread.join();
-
-        std::osyncstream(std::cout) << "\nShutting down...\n";
-
-        // Cleanup and print stats
-        cleanup_workers(rio_workers);
-        print_final_stats(rio_workers);
-
-        cleanup_winsock();
-        return 0;
-    }
-
-    // IOCP mode (original implementation)
     std::vector<std::unique_ptr<server_worker_context>> workers;
 
     // Helper to create and initialize a single worker context for a given CPU id.

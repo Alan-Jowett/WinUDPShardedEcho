@@ -381,8 +381,10 @@ int main(int argc, char* argv[]) try {
     parser.add_option("payload", 'l', "64", true, "Payload size in bytes (default: 64)");
     parser.add_option("cores", 'c', "0", true, "Number of CPU cores to use (default: all)");
     parser.add_option("duration", 'd', "10", true, "Test duration in seconds (default: 10)");
-    parser.add_option("rate", 'r', "10000", true, "Total packet rate limit (packets/sec, 0=unlimited)");
-    parser.add_option("recvbuf", 'b', "4194304", true, "Socket receive buffer size in bytes (default: 4194304)");
+    parser.add_option("rate", 'r', "10000", true,
+                      "Total packet rate limit (packets/sec, 0=unlimited)");
+    parser.add_option("recvbuf", 'b', "4194304", true,
+                      "Socket receive buffer size in bytes (default: 4194304)");
     parser.add_option("sockets", 'k', "16", true, "Number of sockets per worker (default: 16)");
     parser.add_option("stats-file", 'o', "", true, "Output statistics to specified file");
     parser.add_option("help", 'h', "0", false, "Show this help message");

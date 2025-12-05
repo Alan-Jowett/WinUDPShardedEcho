@@ -14,9 +14,9 @@
 
 #include <cstring>
 #include <iostream>
+#include <map>
 #include <stdexcept>
 #include <string>
-#include <map>
 #include <vector>
 
 /**
@@ -146,7 +146,11 @@ class ArgParser {
         std::cout << "Usage: " << program_name << " [options]\n";
         std::cout << "Options:\n";
         // Build display strings and compute column widths
-        struct Row { std::string optnames; std::string default_val; std::string desc; };
+        struct Row {
+            std::string optnames;
+            std::string default_val;
+            std::string desc;
+        };
         std::vector<Row> rows;
         size_t opt_col_width = 0;
         size_t def_col_width = 0;
@@ -167,19 +171,22 @@ class ArgParser {
             def_col_width = std::max(def_col_width, def.size());
         }
 
-        // Print rows with aligned columns. Layout: two-space indent, optnames, two spaces, "Default:", pad, default, two spaces, description
+        // Print rows with aligned columns. Layout: two-space indent, optnames, two spaces,
+        // "Default:", pad, default, two spaces, description
         for (const auto& r : rows) {
             std::cout << "  ";
             std::cout << r.optnames;
             // pad to opt_col_width
-            if (r.optnames.size() < opt_col_width) std::cout << std::string(opt_col_width - r.optnames.size(), ' ');
+            if (r.optnames.size() < opt_col_width)
+                std::cout << std::string(opt_col_width - r.optnames.size(), ' ');
             std::cout << "  ";
             std::cout << "Default:";
             // pad so that defaults align in a column
-            size_t after_default = 0; // length of label "Default:"
+            size_t after_default = 0;  // length of label "Default:"
             after_default = 8;
             std::cout << " ";
-            if (r.default_val.size() < def_col_width) std::cout << std::string(def_col_width - r.default_val.size(), ' ');
+            if (r.default_val.size() < def_col_width)
+                std::cout << std::string(def_col_width - r.default_val.size(), ' ');
             std::cout << r.default_val;
             if (!r.desc.empty()) {
                 std::cout << "  " << r.desc;
